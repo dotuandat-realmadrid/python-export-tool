@@ -43,13 +43,38 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS indicators
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   type_id INTEGER,
-                  requirement TEXT,
+                  indicator_code TEXT,
                   indicator TEXT,
                   value TEXT,
                   unit TEXT,
                   FOREIGN KEY(type_id) REFERENCES product_types(id))''')
 
-    # Kiểm tra schema hiện tại của bảng indicators và thêm cột value nếu thiếu
+    # Kiểm tra schema hiện tại của bảng indicators và migrate nếu cần
+    c.execute("PRAGMA table_info(indicators)")
+    columns = [info[1] for info in c.fetchall()]
+
+    # Nếu có cột 'requirement' (cũ), migrate sang 'indicator_code'
+    if "requirement" in columns and "indicator_code" not in columns:
+        # Tạo bảng mới với indicator_code
+        c.execute('''CREATE TABLE indicators_new
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      type_id INTEGER,
+                      indicator_code TEXT,
+                      indicator TEXT,
+                      value TEXT,
+                      unit TEXT,
+                      FOREIGN KEY(type_id) REFERENCES product_types(id))''')
+
+        # Copy dữ liệu, thay requirement bằng indicator_code
+        c.execute('''INSERT INTO indicators_new (id, type_id, indicator_code, indicator, value, unit)
+                     SELECT id, type_id, requirement, indicator, value, unit FROM indicators''')
+
+        # Drop bảng cũ và rename
+        c.execute("DROP TABLE indicators")
+        c.execute("ALTER TABLE indicators_new RENAME TO indicators")
+        conn.commit()
+
+    # Kiểm tra và thêm cột value nếu thiếu (giữ nguyên logic cũ)
     c.execute("PRAGMA table_info(indicators)")
     columns = [info[1] for info in c.fetchall()]
     if "value" not in columns:

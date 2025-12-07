@@ -62,7 +62,7 @@ class IndicatorManager:
         self.type_tree.heading("STT", text="STT")
         self.type_tree.heading("Loại sản phẩm", text="Loại sản phẩm")
         self.type_tree.column("STT", width=50, anchor="center")
-        self.type_tree.column("Loại sản phẩm", width=600, anchor="w")
+        self.type_tree.column("Loại sản phẩm", width=600, anchor="center")
         self.type_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Bind double-click event for types
@@ -118,24 +118,22 @@ class IndicatorManager:
         indicator_style = ttk.Style()
         indicator_style.configure("IndicatorTree.Treeview", rowheight=100)  # Cao cố định 100
         
-        self.tree = ttk.Treeview(tree_frame, columns=("STT", "Yêu cầu kỹ thuật", "Chỉ tiêu", "Giá trị", "Đơn vị", "Hành động"), 
+        self.tree = ttk.Treeview(tree_frame, columns=("Mã chỉ tiêu", "Chỉ tiêu", "Giá trị", "Đơn vị", "Hành động"), 
                                  show="headings", yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set,
                                  style="IndicatorTree.Treeview")
         v_scrollbar.config(command=self.tree.yview)
         h_scrollbar.config(command=self.tree.xview)
         
-        self.tree.heading("STT", text="STT")
-        self.tree.heading("Yêu cầu kỹ thuật", text="Yêu cầu kỹ thuật")
+        self.tree.heading("Mã chỉ tiêu", text="Mã chỉ tiêu")
         self.tree.heading("Chỉ tiêu", text="Chỉ tiêu")
         self.tree.heading("Giá trị", text="Giá trị")
         self.tree.heading("Đơn vị", text="Đơn vị")
         self.tree.heading("Hành động", text="Hành động")
         
         # Adjust column widths
-        self.tree.column("STT", width=60, anchor="center")
-        self.tree.column("Yêu cầu kỹ thuật", width=240, anchor="w")
+        self.tree.column("Mã chỉ tiêu", width=100, anchor="center")
         self.tree.column("Chỉ tiêu", width=240, anchor="w")
-        self.tree.column("Giá trị", width=320, anchor="center")
+        self.tree.column("Giá trị", width=460, anchor="center")
         self.tree.column("Đơn vị", width=150, anchor="center")
         self.tree.column("Hành động", width=100, anchor="center")
         
@@ -327,7 +325,7 @@ class IndicatorManager:
     def on_click(self, event):
         """Xử lý click vào cột Hành động"""
         column = self.tree.identify_column(event.x)
-        if column == "#6":
+        if column == "#5":
             item = self.tree.identify_row(event.y)
             if item:
                 if item.startswith("new_"):
@@ -357,9 +355,8 @@ class IndicatorManager:
             messagebox.showerror("Lỗi", "Vui lòng chọn loại sản phẩm trước khi thêm")
             return
         current_children = self.tree.get_children()
-        stt = len(current_children) + 1
-        new_iid = f"new_{stt}"
-        self.tree.insert("", "end", iid=new_iid, values=(stt, "", "", "", "", "Hủy"))
+        new_iid = f"new_{len(current_children) + 1}"
+        self.tree.insert("", "end", iid=new_iid, values=("", "", "", "", "Hủy"))
     
     def save_new_indicators(self):
         """Lưu các chỉ tiêu mới thêm"""
@@ -369,20 +366,23 @@ class IndicatorManager:
             for child in list(self.tree.get_children()):
                 if child.startswith("new_"):
                     values = self.tree.item(child)['values']
-                    req_wrapped = values[1]
-                    ind_wrapped = values[2]
-                    value_wrapped = values[3]
-                    unit_wrapped = values[4]
-                    req = req_wrapped.replace('\n', ' ')
+                    indicator_code_wrapped = values[0]
+                    ind_wrapped = values[1]
+                    value_wrapped = values[2]
+                    unit_wrapped = values[3]
+                    indicator_code = indicator_code_wrapped.replace('\n', ' ')
                     ind = ind_wrapped.replace('\n', ' ')
                     value = value_wrapped.replace('\n', ' ')
                     unit = unit_wrapped.replace('\n', ' ')
-                    if not req:
-                        messagebox.showerror("Lỗi", "Yêu cầu kỹ thuật bắt buộc phải có")
+                    if not indicator_code:
+                        messagebox.showerror("Lỗi", "Mã chỉ tiêu bắt buộc phải có")
+                        return
+                    if not ind:
+                        messagebox.showerror("Lỗi", "Chỉ tiêu bắt buộc phải có")
                         return
                     type_id = self.current_type_id
-                    c.execute('''INSERT INTO indicators (type_id, requirement, indicator, value, unit)
-                                 VALUES (?, ?, ?, ?, ?)''', (type_id, req, ind, value, unit))
+                    c.execute('''INSERT INTO indicators (type_id, indicator_code, indicator, value, unit)
+                                 VALUES (?, ?, ?, ?, ?)''', (type_id, indicator_code, ind, value, unit))
                     ind_id = c.lastrowid
                     man_ids = c.execute("SELECT manufacturer_id FROM product_type_mapping WHERE type_id=?", (type_id,)).fetchall()
                     for m in man_ids:
@@ -402,7 +402,7 @@ class IndicatorManager:
         """Bắt đầu chỉnh sửa khi double-click vào ô"""
         item = self.tree.identify_row(event.y)
         column = self.tree.identify_column(event.x)
-        if item and column not in ("#1", "#6"):
+        if item and column not in ("#5"):
             self.start_inline_edit(item, column, event.x, event.y)
     
     def get_units(self):
@@ -423,7 +423,7 @@ class IndicatorManager:
             return
         entry_x, entry_y, entry_width, entry_height = bbox
         
-        if column == "#5":  # Đơn vị - Combobox
+        if column == "#4":  # Đơn vị - Combobox
             self.edit_combo = ttk.Combobox(self.tree, values=self.get_units())
             self.edit_combo.set(current_value)
             self.edit_combo.place(x=entry_x, y=entry_y, width=entry_width, height=entry_height, anchor="nw")
@@ -431,7 +431,7 @@ class IndicatorManager:
             self.edit_combo.bind("<Return>", lambda e: self.save_inline_edit(item, column, column_index))
             self.edit_combo.bind("<FocusOut>", lambda e: self.save_inline_edit(item, column, column_index))
             self.edit_combo.bind("<Escape>", lambda e: self.cancel_inline_edit())
-        elif column in ("#2", "#3", "#4"):  # Các cột multiline: Yêu cầu, Chỉ tiêu, Giá trị - Text với scrollbar
+        elif column in ("#1", "#2", "#3"):  # Các cột multiline: Mã chỉ tiêu, Chỉ tiêu, Giá trị - Text với scrollbar
             self.edit_text = tk.Text(self.tree, wrap='word')
             self.edit_text.insert("1.0", current_value)
             text_width = entry_width - 20  # Để chỗ cho scrollbar
@@ -479,13 +479,13 @@ class IndicatorManager:
         else:
             return
         
-        if column_index == 1:
+        if column_index == 0:
+            wrapped_value = wrap_text(new_value, 40)
+        elif column_index == 1:
             wrapped_value = wrap_text(new_value, 40)
         elif column_index == 2:
-            wrapped_value = wrap_text(new_value, 40)
+            wrapped_value = wrap_text(new_value, 80)
         elif column_index == 3:
-            wrapped_value = wrap_text(new_value, 30)
-        elif column_index == 4:
             wrapped_value = wrap_text(new_value, 20)
         else:
             wrapped_value = new_value
@@ -498,13 +498,13 @@ class IndicatorManager:
             c = conn.cursor()
             try:
                 ind_id = int(item)
-                if column_index == 1:
-                    c.execute("UPDATE indicators SET requirement=? WHERE id=?", (original_value, ind_id))
-                elif column_index == 2:
+                if column_index == 0:
+                    c.execute("UPDATE indicators SET indicator_code=? WHERE id=?", (original_value, ind_id))
+                elif column_index == 1:
                     c.execute("UPDATE indicators SET indicator=? WHERE id=?", (original_value, ind_id))
-                elif column_index == 3:
+                elif column_index == 2:
                     c.execute("UPDATE indicators SET value=? WHERE id=?", (original_value, ind_id))
-                elif column_index == 4:
+                elif column_index == 3:
                     c.execute("UPDATE indicators SET unit=? WHERE id=?", (original_value, ind_id))
                 conn.commit()
                 self.load_indicators()
@@ -541,18 +541,18 @@ class IndicatorManager:
         c = conn.cursor()
         
         if self.current_type_id:
-            indicators = c.execute('''SELECT id, requirement, indicator, value, unit 
+            indicators = c.execute('''SELECT id, indicator_code, indicator, value, unit 
                                     FROM indicators 
                                     WHERE type_id = ?''', (self.current_type_id,)).fetchall()
         else:
             indicators = []
         
         self.tree.delete(*self.tree.get_children())
-        for index, ind in enumerate(indicators, 1):
-            req_wrapped = wrap_text(ind[1], 40)
+        for ind in indicators:
+            indicator_code_wrapped = wrap_text(ind[1], 40)
             ind_wrapped = wrap_text(ind[2], 40)
             value_wrapped = wrap_text(ind[3] or "", 80)
             unit_wrapped = wrap_text(ind[4] or "", 20)
-            self.tree.insert("", "end", iid=str(ind[0]), values=(index, req_wrapped, ind_wrapped, value_wrapped, unit_wrapped, "Xóa"))
+            self.tree.insert("", "end", iid=str(ind[0]), values=(indicator_code_wrapped, ind_wrapped, value_wrapped, unit_wrapped, "Xóa"))
         
         conn.close()

@@ -9,9 +9,7 @@ import os
 from utils import wrap_text
 from database import DB_NAME
 from collections import defaultdict
-import uuid
 import re
-import uuid
 
 class DetailProjectProduct:
     def __init__(self, root, project_id, product_id, callback=None):
@@ -34,7 +32,7 @@ class DetailProjectProduct:
         self.product_name_entry.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
         tk.Button(root, text="Cập nhật chi tiết dự án", command=self.save_product_project).grid(row=1, column=2, padx=5, pady=5)
         
-        self.restore_button = tk.Button(root, text="Khôi phục", command=self.restore_indicators)
+        self.restore_button = tk.Button(root, text="Khôi phục", command=self.restore_indicators, width=10)
         self.restore_button.grid(row=2, column=2, padx=5, pady=5)
         
         tk.Label(root, text="Chọn loại sản phẩm:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
@@ -61,14 +59,7 @@ class DetailProjectProduct:
                                                 font=("Arial", 10))
         self.delete_reference_button.pack(side=tk.LEFT, padx=(0, 5))
         
-        # Thêm button Export file
-        self.export_button = tk.Button(reference_button_frame, 
-                                       text="Export file", 
-                                       command=self.export_files,
-                                       font=("Arial", 10))
-        self.export_button.pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.add_button = tk.Button(root, text="+", command=self.add_custom_indicator, width=5)
+        self.add_button = tk.Button(root, text="+", command=self.add_custom_indicator, width=10)
         self.add_button.grid(row=3, column=2, padx=5, pady=5)
         self.add_button.grid_remove()
         
@@ -475,57 +466,68 @@ class DetailProjectProduct:
         self.on_tab_changed(None)
     
     def add_new_reference_row(self):
+        """
+        GIẢI THÍCH: Thêm sản phẩm tham khảo mới (manufacturer)
+        - Chỉ cho phép thêm ở tab Hãng
+        - Tạo manufacturer mới với tên và product_name rỗng
+        - Tạo mapping với product_types đã chọn
+        - Tạo product_specifications rỗng cho tất cả indicators
+        - Tạo reference_products nếu đã có product_id
+        """
         if self.current_tab != "three_brands":
             messagebox.showerror("Lỗi", "Chỉ có thể thêm sản phẩm tham khảo trong tab Hãng")
             return
-        
-        if not self.selected_type:
+       
+        if not self.selected_type: # SỬA: Kiểm tra self.selected_type thay vì list
             messagebox.showerror("Lỗi", "Chọn loại sản phẩm trước khi thêm sản phẩm tham khảo")
             return
-        
+       
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        
-        type_id = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
-        if type_id:
-            type_id = type_id[0]
-        
+       
+        # SỬA: Lấy chỉ 1 type_id từ self.selected_type
+        type_id_result = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
+        if not type_id_result:
+            conn.close()
+            return
+        type_id = type_id_result[0]
+       
         try:
+            # GIẢI THÍCH: Tạo manufacturer mới với tên và product_name rỗng
             c.execute("INSERT INTO manufacturers (name, product_name) VALUES (?, ?)", ("", ""))
             man_id = c.lastrowid
-            
+           
+            # SỬA: Tạo mapping chỉ với 1 type_id
             c.execute("INSERT INTO product_type_mapping (manufacturer_id, type_id) VALUES (?, ?)", (man_id, type_id))
-            
+           
+            # SỬA: Tạo product_specifications rỗng chỉ cho indicators của 1 type_id
             indicator_ids = c.execute("SELECT id FROM indicators WHERE type_id=?", (type_id,)).fetchall()
             for ind_id_tuple in indicator_ids:
                 c.execute("INSERT INTO product_specifications (manufacturer_id, indicator_id, specification_value) VALUES (?, ?, ?)",
-                          (man_id, ind_id_tuple[0], ""))
-            
+                            (man_id, ind_id_tuple[0], ""))
+           
+            # GIẢI THÍCH: Tạo reference_products nếu đã có product_id
             if self.product_id:
                 sort_order = len(self.reference_products)
-                c.execute("INSERT INTO reference_products (product_id, manufacturer_id, sort_order) VALUES (?, ?, ?)", 
-                          (self.product_id, man_id, sort_order))
-            
+                c.execute("INSERT INTO reference_products (product_id, manufacturer_id, sort_order) VALUES (?, ?, ?)",
+                        (self.product_id, man_id, sort_order))
+           
             conn.commit()
-            
+           
+            # GIẢI THÍCH: Thêm vào danh sách reference_products
             self.reference_products.append((man_id, "", ""))
-            
+           
+            # GIẢI THÍCH: Reload tab Hãng và BOM
             self.load_three_brands_tab()
             self.load_bom_tab()
-
-            # GIẢI THÍCH: Khi thêm sản phẩm tham khảo mới, sau khi load lại tab, tự động cuộn thanh ngang về bên phải để hiển thị cột mới thêm (vì cột mới nằm ở cuối, nếu không cuộn thì người dùng không thấy do khung treeview không hiển thị hết các cột, dẫn đến mất tên cột hoặc không thấy nội dung mới). Điều này đảm bảo thanh cuộn ngang hoạt động và hiển thị hết nội dung mà không cần người dùng kéo tay.
-            self.three_brands_tree.xview_moveto(1)  # Cuộn về bên phải để thấy cột mới
-            self.bom_tree.xview_moveto(1)  # Tương tự cho tab BOM
-            
+           
             messagebox.showinfo("Thành công", "Đã thêm sản phẩm tham khảo mới")
-            
+           
         except Exception as e:
             conn.rollback()
             messagebox.showerror("Lỗi", f"Lỗi khi thêm sản phẩm tham khảo: {str(e)}")
         finally:
             conn.close()
-
-    
 
     def delete_reference_product(self):
         """
@@ -537,11 +539,10 @@ class DetailProjectProduct:
         if self.current_tab != "three_brands":
             messagebox.showerror("Lỗi", "Chỉ có thể xóa sản phẩm tham khảo trong tab Hãng")
             return
-        
+       
         if not self.reference_products:
             messagebox.showinfo("Thông báo", "Không có sản phẩm tham khảo nào để xóa")
             return
-
         # Tạo cửa sổ chọn sản phẩm để xóa
         delete_win = tk.Toplevel(self.root)
         delete_win.title("Xóa sản phẩm tham khảo")
@@ -549,24 +550,19 @@ class DetailProjectProduct:
         delete_win.resizable(False, False)
         delete_win.transient(self.root)
         delete_win.grab_set()
-
         main_frame = tk.Frame(delete_win)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
         label = tk.Label(main_frame, text="Chọn sản phẩm tham khảo để xóa:",
                         font=("Arial", 12, "bold"))
         label.pack(pady=(0, 10))
-
         # Treeview
         tree_frame = tk.Frame(main_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
         v_scrollbar = tk.Scrollbar(tree_frame, orient="vertical")
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
         delete_tree = ttk.Treeview(tree_frame, columns=("STT", "Tên sản phẩm", "Tên hãng"),
                                 show="headings", yscrollcommand=v_scrollbar.set, selectmode="extended")
         v_scrollbar.config(command=delete_tree.yview)
-
         delete_tree.heading("STT", text="STT")
         delete_tree.heading("Tên sản phẩm", text="Tên sản phẩm")
         delete_tree.heading("Tên hãng", text="Tên hãng")
@@ -574,7 +570,6 @@ class DetailProjectProduct:
         delete_tree.column("Tên sản phẩm", width=250, anchor="w")
         delete_tree.column("Tên hãng", width=250, anchor="w")
         delete_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
         # Thêm dữ liệu vào Treeview
         for index, (man_id, name, prod_name) in enumerate(self.reference_products, 1):
             delete_tree.insert("", "end",
@@ -582,25 +577,20 @@ class DetailProjectProduct:
                                     prod_name or "Chưa đặt tên sản phẩm",
                                     name or "Chưa đặt tên hãng"),
                             tags=(str(man_id),))
-
         # Frame chứa các nút
         button_frame = tk.Frame(main_frame)
         button_frame.pack(pady=10)
-
         def do_delete_selected():
             selected = delete_tree.selection()
             if not selected:
                 messagebox.showerror("Lỗi", "Vui lòng chọn ít nhất một sản phẩm tham khảo để xóa")
                 return
-
             # Hỏi xác nhận ngắn gọn
             if not messagebox.askyesno("Xác nhận", "Bạn có chắc muốn xóa các sản phẩm tham khảo đã chọn không?"):
                 return
-
             conn = sqlite3.connect(DB_NAME)
             c = conn.cursor()
             deleted_count = 0
-
             try:
                 # BƯỚC 1: Xóa các sản phẩm tham khảo đã chọn - BATCH DELETE
                 # GIẢI THÍCH: Thu thập tất cả man_id cần xóa trước
@@ -610,33 +600,32 @@ class DetailProjectProduct:
                     if tags:
                         man_id = int(tags[0])
                         man_ids_to_delete.append(man_id)
-                
+               
                 if not man_ids_to_delete:
                     conn.close()
                     return
-                
+               
                 # GIẢI THÍCH: Xóa hàng loạt thay vì từng cái một - NHANH HƠN
                 placeholders = ','.join('?' * len(man_ids_to_delete))
                 c.execute(f"DELETE FROM product_specifications WHERE manufacturer_id IN ({placeholders})", man_ids_to_delete)
                 c.execute(f"DELETE FROM product_type_mapping WHERE manufacturer_id IN ({placeholders})", man_ids_to_delete)
                 c.execute(f"DELETE FROM reference_products WHERE manufacturer_id IN ({placeholders})", man_ids_to_delete)
                 c.execute(f"DELETE FROM manufacturers WHERE id IN ({placeholders})", man_ids_to_delete)
-                
+               
                 deleted_count = len(man_ids_to_delete)
-                
+               
                 # GIẢI THÍCH: Cập nhật danh sách reference_products
-                self.reference_products = [(m_id, n, p) for m_id, n, p in self.reference_products 
+                self.reference_products = [(m_id, n, p) for m_id, n, p in self.reference_products
                                         if m_id not in man_ids_to_delete]
-
                 conn.commit()
-                
+               
                 # BƯỚC 2: Cập nhật giá trị cho các chỉ tiêu - CHỈ CẬP NHẬT CUSTOM_INDICATORS
                 # GIẢI THÍCH: Không cần query lại database, chỉ cập nhật custom_indicators
                 if self.selected_type:
                     type_id_result = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
                     if type_id_result:
                         type_id = type_id_result[0]
-                        
+                       
                         # GIẢI THÍCH: Query một lần duy nhất để lấy tất cả indicators
                         hidden_ids = self.deleted_indicators.get("three_brands", set())
                         if hidden_ids:
@@ -647,84 +636,77 @@ class DetailProjectProduct:
                             ).fetchall()
                         else:
                             indicators = c.execute("SELECT id FROM indicators WHERE type_id = ?", (type_id,)).fetchall()
-                        
+                       
                         # GIẢI THÍCH: Cập nhật custom_indicators mà không reload tab
                         for ind_tuple in indicators:
                             ind_id = ind_tuple[0]
                             danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                            
+                           
                             # GIẢI THÍCH: Tính giá trị mới nhưng chưa load tab
                             # Sẽ tính dựa trên reference_products đã được cập nhật
                             new_extreme_value = self.calculate_extreme_value(ind_id, self.three_brands_tree, self.reference_columns, danh_gia)
                             self.custom_indicators.setdefault("three_brands", {})[f"so_sanh_{ind_id}"] = new_extreme_value
-                            
+                           
                             # GIẢI THÍCH: Cập nhật cho các tab phụ thuộc (chỉ cập nhật custom_indicators)
                             # BOM
                             self.custom_indicators.setdefault("bom", {})[f"so_sanh_{ind_id}"] = new_extreme_value
-                            
+                           
                             # DMKT
                             self.custom_indicators.setdefault("dmkt", {})[f"so_sanh_{ind_id}"] = new_extreme_value
-                            
+                           
                             # CTKT bộ
                             self.custom_indicators.setdefault("ctkt_bo", {})[f"gia_tri_{ind_id}"] = new_extreme_value
-                            
+                           
                             # CTKT mua sắm - cập nhật cả tiêu chí
                             self.custom_indicators.setdefault("ctkt_mua_sam", {})[f"so_sanh_{ind_id}"] = new_extreme_value
-                
+               
                 conn.close()
-                
+               
                 # BƯỚC 3: Reload tất cả các tab MỘT LẦN DUY NHẤT
                 # GIẢI THÍCH: Load lại tab để hiển thị thay đổi
                 # Sử dụng update_idletasks() để giảm lag
                 delete_win.destroy()
-                
+               
                 self.root.update_idletasks()
                 self.load_three_brands_tab()
-                
+               
                 self.root.update_idletasks()
                 self.load_bom_tab()
-                
+               
                 self.root.update_idletasks()
                 self.load_dmkt_tab()
-                
+               
                 self.root.update_idletasks()
                 self.load_ctkt_bo_tab()
-                
+               
                 self.root.update_idletasks()
                 self.load_ctkt_mua_sam_tab()
-                
+               
                 # Thông báo ngắn gọn
-                messagebox.showinfo("Thành công", 
+                messagebox.showinfo("Thành công",
                     f"Đã xóa {deleted_count} sản phẩm tham khảo và cập nhật giá trị")
-
             except Exception as e:
                 conn.rollback()
                 messagebox.showerror("Lỗi", f"Lỗi khi xóa: {str(e)}")
             finally:
                 conn.close()
-
         def cancel_delete():
             delete_win.destroy()
-
         # Các nút
         delete_button = ttk.Button(button_frame,
                                 text=f"XÓA ({len(delete_tree.get_children())} sản phẩm)",
                                 command=do_delete_selected,
                                 width=20)
         delete_button.pack(side=tk.LEFT, padx=5)
-
         cancel_button = ttk.Button(button_frame,
                                 text="HỦY",
                                 command=cancel_delete,
                                 width=20)
         cancel_button.pack(side=tk.LEFT, padx=5)
-
         # Phím tắt
         delete_win.bind('<Return>', lambda e: do_delete_selected())
         delete_win.bind('<Escape>', lambda e: cancel_delete())
-
         delete_tree.focus_set()
-
         # Cập nhật text của nút Xóa
         def update_delete_button_text():
             selected_count = len(delete_tree.selection())
@@ -732,7 +714,6 @@ class DetailProjectProduct:
                 delete_button.config(text=f"XÓA ({selected_count} sản phẩm)")
             else:
                 delete_button.config(text=f"XÓA ({len(delete_tree.get_children())} sản phẩm)")
-
         delete_tree.bind('<<TreeviewSelect>>', lambda e: update_delete_button_text())
 
     def add_reference_from_tree(self, event):
@@ -804,37 +785,36 @@ class DetailProjectProduct:
     def load_three_brands_tab(self):
         """
         GIẢI THÍCH: Load dữ liệu cho tab Hãng
-        - SỬA: Hiển thị chỉ tiêu "Chủng loại" đầu tiên (requirement="Chủng loại", indicator=NULL)
+        - SỬA: Thêm cột "Đánh giá" và cột "Tham chiếu" sau mỗi sản phẩm tham khảo
+        - Đồng bộ với logic từ detail_product.py
         """
         if not self.selected_type:
             return
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        
+      
+        # Lấy type_id từ self.selected_type
         type_id_result = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
         if not type_id_result:
             conn.close()
             return
         type_id = type_id_result[0]
-        
+      
         hidden_ids = self.deleted_indicators.get("three_brands", set())
         placeholders = ','.join('?' * len(hidden_ids)) if hidden_ids else '0'
-        
-        # SỬA: ORDER BY để "Chủng loại" lên đầu
-        indicators = c.execute(f"""
-            SELECT id, requirement, indicator, unit, value 
-            FROM indicators 
-            WHERE type_id = ? AND id NOT IN ({placeholders}) 
-        """, (type_id,) + tuple(hidden_ids)).fetchall()
-        
+        indicators = c.execute(f"SELECT id, indicator_code, indicator, unit, value FROM indicators WHERE type_id = ? AND id NOT IN ({placeholders})",
+                            (type_id,) + tuple(hidden_ids)).fetchall()
+      
         self.three_brands_tree.delete(*self.three_brands_tree.get_children())
         self.three_brands_tree["columns"] = []
         self.three_brands_indicator_map.clear()
-        
-        display_columns = ["STT", "Yêu cầu kỹ thuật", "Chỉ tiêu", "Đánh giá", "Giá trị", "Giá trị tham khảo", "Đơn vị", "Loại chỉ tiêu"]
+      
+        # GIẢI THÍCH: Tạo display_columns với cột tham chiếu sau mỗi sản phẩm tham khảo
+        display_columns = ["Mã chỉ tiêu", "Chỉ tiêu", "Đánh giá", "Giá trị", "Giá trị tham khảo", "Đơn vị", "Loại chỉ tiêu"]
         self.reference_columns = {}
-        self.reference_value_columns = {}
-        
+        self.reference_value_columns = {} # Dict để lưu cột tham chiếu
+      
+        # GIẢI THÍCH: Tạo header cho cột sản phẩm tham khảo và cột tham chiếu
         for i, (man_id, _, _) in enumerate(self.reference_products, 1):
             manufacturer_info = c.execute("SELECT name, product_name FROM manufacturers WHERE id=?", (man_id,)).fetchone()
             if manufacturer_info:
@@ -842,161 +822,185 @@ class DetailProjectProduct:
                 col_name = f"{prod_name or 'Sản phẩm'} - {name or 'Hãng'}" if name or prod_name else f"Sản phẩm tham khảo {i}"
             else:
                 col_name = f"Sản phẩm tham khảo {i}"
-            
+          
             display_columns.append(col_name)
             self.reference_columns[col_name] = man_id
-            
+          
+            # Thêm cột tham chiếu sau mỗi sản phẩm tham khảo
             ref_col_name = f"Tham chiếu {i}"
             display_columns.append(ref_col_name)
-            self.reference_value_columns[ref_col_name] = man_id
-        
+            self.reference_value_columns[ref_col_name] = man_id # Lưu man_id để biết thuộc sản phẩm nào
+      
         display_columns.append("Hành động")
-        
+      
         self.three_brands_tree["columns"] = display_columns
         for col in display_columns:
             self.three_brands_tree.heading(col, text=col)
+            # GIẢI THÍCH: Điều chỉnh width cho các cột
             if col.startswith("Tham chiếu"):
-                width = 250
-            elif col in ["Yêu cầu kỹ thuật", "Chỉ tiêu"]:
-                width = 300
+                width = 250 # SỬA: Tăng width cho cột tham chiếu để hiển thị hết chữ dài
+            elif col in ["Mã chỉ tiêu", "Chỉ tiêu"]:
+                width = 300 # SỬA: Tăng width cho cột dài để tránh cắt chữ, cho phép kéo ngang nếu vượt màn hình
             else:
                 width = self.column_widths["three_brands"].get(col, 200)
-            
-            self.three_brands_tree.column(col, width=width, minwidth=width, stretch=False, 
-                                        anchor="center" if col in ["Giá trị", "Giá trị tham khảo", "Đơn vị", "Loại chỉ tiêu", "Hành động"] or col in self.reference_columns or col in self.reference_value_columns else "w")
-        
+          
+            self.three_brands_tree.column(col, width=width, minwidth=width, stretch=False,
+                                        anchor="center" if col in ["Mã chỉ tiêu", "Giá trị", "Giá trị tham khảo", "Đơn vị", "Loại chỉ tiêu", "Hành động"] or col in self.reference_columns or col in self.reference_value_columns else "w")
+            # GIẢI THÍCH: Thêm minwidth=width và stretch=False để các cột giữ kích thước cố định, không bị nén khi thêm nhiều cột, buộc thanh cuộn ngang xuất hiện khi tổng width vượt quá khung treeview, giúp hiển thị hết nội dung mà không mất tên cột.
+      
+        # GIẢI THÍCH SỬA: Nếu không có sản phẩm tham khảo, đặt stretch=True cho các cột chính để giới hạn độ rộng, làm thanh cuộn ngang nhỏ lại (vừa khung)
         if not self.reference_products:
             for col in display_columns:
-                if col not in ["STT", "Hành động"]:
+                if col not in ["Hành động"]:
                     self.three_brands_tree.column(col, stretch=True)
-        
+      
         max_height = self.max_row_heights.get("three_brands", 30)
-        
-        # Hàng 1: Tên sản phẩm tham khảo
-        values = ["", "Tên sản phẩm tham khảo", "", "", "", "", "", ""]
+      
+        # Hàng 1: Tên sản phẩm tham khảo - SỬA: Cho phép chỉnh sửa cột tham chiếu ở hàng 1
+        values = ["Tên sản phẩm tham khảo", "", "", "", "", "", ""]
         for col_name in self.reference_columns.keys():
             man_id = self.reference_columns[col_name]
             manufacturer_info = c.execute("SELECT product_name FROM manufacturers WHERE id=?", (man_id,)).fetchone()
             prod_name = manufacturer_info[0] if manufacturer_info else ""
             values.append(prod_name or "Nhập tên sản phẩm")
-            
-            ref_key = f"ref_value_{man_id}_product_name"
+          
+            # SỬA MỚI: Hàng 1 - Cho phép chỉnh sửa cột tham chiếu
+            ref_key = f"ref_value_{man_id}_product_name" # Sử dụng key đặc biệt cho tên sản phẩm
             ref_value = self.custom_indicators.get("three_brands", {}).get(ref_key, "")
-            values.append(wrap_text(ref_value, 20))
-        values.append("")
+            values.append(wrap_text(ref_value, 20)) # SỬA: Tăng wrap_text lên 20 để hiển thị tốt hơn
+        values.append("") # Không có nút Xóa
         item = self.three_brands_tree.insert("", "end", values=values, tags=("new_reference",))
         self.three_brands_indicator_map[item] = "product_name"
-        
-        # Hàng 2: Tên hãng
-        values = ["", "Tên hãng", "", "", "", "", "", ""]
+      
+        # Hàng 2: Tên hãng - SỬA: Không cho chỉnh sửa cột tham chiếu ở hàng 2
+        values = ["Tên hãng", "", "", "", "", "", ""]
         for col_name in self.reference_columns.keys():
             man_id = self.reference_columns[col_name]
             manufacturer_info = c.execute("SELECT name FROM manufacturers WHERE id=?", (man_id,)).fetchone()
             name = manufacturer_info[0] if manufacturer_info else ""
             values.append(name or "Nhập tên hãng")
-            values.append("")
-        values.append("")
+            values.append("") # Cột tham chiếu để trống ở hàng 2
+        values.append("") # Không có nút Xóa
         item = self.three_brands_tree.insert("", "end", values=values, tags=("new_reference",))
         self.three_brands_indicator_map[item] = "name"
-        
+      
         had_indicators = False
-        # Các hàng thông số kỹ thuật
+        # SỬA MỚI: Thu thập tất cả indicator_code để kiểm tra parent
+        all_codes = [ind[1] for ind in indicators]
+        def is_parent(code, all_codes):
+            return any(c.startswith(code + '.') for c in all_codes if c != code)
+      
+        # Các hàng thông số kỹ thuật - SỬA: Không cho chỉnh sửa cột tham chiếu ở các hàng này
         for index, ind in enumerate(indicators, 1):
             had_indicators = True
-            ind_id, req, indc, unit, value = ind
-            values = [index, wrap_text(req, 50), wrap_text(indc if indc else "", 50)]
-            
-            # Cột "Đánh giá"
-            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+            ind_id, ind_code, indc, unit, value = ind
+            values = [wrap_text(ind_code, 50), wrap_text(indc, 50)] # SỬA: Tăng wrap_text lên 50 để hiển thị hết chữ dài
+          
+            # SỬA MỚI: Kiểm tra nếu là parent thì để trống "Đánh giá", "Giá trị", "Loại chỉ tiêu"
+            parent_tag = ()
+            if is_parent(ind_code, all_codes):
+                danh_gia = ""
+                so_sanh = ""
+                crit_type = ""
+                unit = ""  # Để trống Đơn vị theo yêu cầu không edit, nhưng hiển thị rỗng
+                parent_tag = ("parent",)
+            else:
+                # Cột "Đánh giá"
+                danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+          
+                # Cột "Giá trị"
+                so_sanh = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+                if not so_sanh:
+                    so_sanh = self.calculate_extreme_value(ind_id, self.three_brands_tree, self.reference_columns, danh_gia)
+                    if so_sanh:
+                        self.custom_indicators.setdefault("three_brands", {})[f"so_sanh_{ind_id}"] = so_sanh
+          
+                # Cột "Loại chỉ tiêu"
+                crit_type = self.custom_indicators.get("three_brands", {}).get(f"crit_type_{ind_id}", "CTCB")
+                if crit_type not in ["CTCB", "KCB"]:
+                    crit_type = "CTCB"
+                    self.custom_indicators["three_brands"][f"crit_type_{ind_id}"] = crit_type
+          
             values.append(danh_gia)
-            
-            # Cột "Giá trị"
-            so_sanh = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-            if not so_sanh:
-                so_sanh = self.calculate_extreme_value(ind_id, self.three_brands_tree, self.reference_columns, danh_gia)
-                if so_sanh:
-                    self.custom_indicators.setdefault("three_brands", {})[f"so_sanh_{ind_id}"] = so_sanh
             values.append(wrap_text(so_sanh, 20))
-            
+          
             # Cột "Giá trị tham khảo"
             gia_tri_tham_khao = value if value is not None else ""
             values.append(wrap_text(gia_tri_tham_khao, 20))
-            
+          
             values.append(wrap_text(unit or "", 20))
-            
-            # Cột "Loại chỉ tiêu"
-            crit_type = self.custom_indicators.get("three_brands", {}).get(f"crit_type_{ind_id}", "CTCB")
-            if crit_type not in ["CTCB", "KCB"]:
-                crit_type = "CTCB"
-                self.custom_indicators["three_brands"][f"crit_type_{ind_id}"] = crit_type
             values.append(crit_type)
-            
+          
+            # GIẢI THÍCH: Thêm giá trị cho cột sản phẩm tham khảo và cột tham chiếu
             for col_name in self.reference_columns.keys():
                 man_id = self.reference_columns[col_name]
-                val = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?", 
+                val = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?",
                                 (man_id, ind_id)).fetchone()
                 specific_value = wrap_text(val[0] if val else "", 50)
                 values.append(specific_value)
-                
+              
+                # SỬA MỚI: Hàng thông số kỹ thuật - Không cho chỉnh sửa cột tham chiếu
                 ref_key = f"ref_value_{man_id}_{ind_id}"
                 ref_value = self.custom_indicators.get("three_brands", {}).get(ref_key, "")
                 values.append(wrap_text(ref_value, 20))
-            
+          
             values.append("Xóa")
-            
+          
             line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
-            item = self.three_brands_tree.insert("", "end", values=values, tags=("data_row",))
+            item = self.three_brands_tree.insert("", "end", values=values, tags=("data_row",) + parent_tag)
             self.three_brands_indicator_map[item] = ind_id
-            
+          
             self.check_and_mark_row(self.three_brands_tree, item, ind_id, so_sanh, None, "three_brands")
-            
+          
             height = line_count * 30
             max_height = max(max_height, height)
-        
+      
         if had_indicators:
             max_height = min(max_height, 120)
             self.max_row_heights["three_brands"] = max_height
             style = ttk.Style()
             style.configure("Custom.Treeview", rowheight=max_height)
             style.configure("DataRow.Treeview", rowheight=max_height)
-        
+      
         conn.close()
 
     def load_bom_tab(self):
         """
-        GIẢI THÍCH: Load dữ liệu cho tab BOM
-        - SỬA: Hiển thị chỉ tiêu "Chủng loại" đầu tiên
+        GIẢI THÍCH: Load dữ liệu cho tab BOM - SAO CHÉP 100% logic từ load_three_brands_tab
+        - Không được sửa đổi bất kỳ logic nào so với load_three_brands_tab
+        - Chỉ thay đổi tên biến three_brands → bom
         """
         if not self.selected_type:
             return
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        
+      
+        # Lấy type_id từ self.selected_type
         type_id_result = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
         if not type_id_result:
             conn.close()
             return
         type_id = type_id_result[0]
-        
+      
         hidden_ids = self.deleted_indicators.get("bom", set())
         placeholders = ','.join('?' * len(hidden_ids)) if hidden_ids else '0'
-        
-        # SỬA: ORDER BY để "Chủng loại" lên đầu
-        indicators = c.execute(f"""
-            SELECT id, requirement, indicator, unit 
-            FROM indicators 
-            WHERE type_id = ? AND id NOT IN ({placeholders}) 
-        """, (type_id,) + tuple(hidden_ids)).fetchall()
-        
+        indicators = c.execute(f"SELECT id, indicator_code, indicator, unit FROM indicators WHERE type_id = ? AND id NOT IN ({placeholders})",
+                            (type_id,) + tuple(hidden_ids)).fetchall()
+      
+        # Xóa toàn bộ
         self.bom_tree.delete(*self.bom_tree.get_children())
         self.bom_tree["columns"] = []
         self.bom_indicator_map.clear()
-        
+      
+        # SAO CHÉP 100% từ load_three_brands_tab dòng 108-109
         self.reference_columns = {}
-        self.reference_value_columns = {}
-        
-        display_columns = ["STT", "Yêu cầu kỹ thuật", "Chỉ tiêu", "Giá trị", "Đơn vị", "Loại chỉ tiêu"]
-        
+        self.reference_value_columns = {} # Dict để lưu cột tham chiếu
+      
+        # SAO CHÉP 100% từ load_three_brands_tab dòng 111-125
+        # GIẢI THÍCH: Tạo display_columns với cột tham chiếu sau mỗi sản phẩm tham khảo
+        display_columns = ["Mã chỉ tiêu", "Chỉ tiêu", "Giá trị", "Đơn vị", "Loại chỉ tiêu"]
+      
+        # GIẢI THÍCH: Tạo header cho cột sản phẩm tham khảo và cột tham chiếu
         for i, (man_id, _, _) in enumerate(self.reference_products, 1):
             manufacturer_info = c.execute("SELECT name, product_name FROM manufacturers WHERE id=?", (man_id,)).fetchone()
             if manufacturer_info:
@@ -1004,252 +1008,231 @@ class DetailProjectProduct:
                 col_name = f"{prod_name or 'Sản phẩm'} - {name or 'Hãng'}" if name or prod_name else f"Sản phẩm tham khảo {i}"
             else:
                 col_name = f"Sản phẩm tham khảo {i}"
-            
+          
             display_columns.append(col_name)
             self.reference_columns[col_name] = man_id
-            
+          
+            # Thêm cột tham chiếu sau mỗi sản phẩm tham khảo
             ref_col_name = f"Tham chiếu {i}"
             display_columns.append(ref_col_name)
-            self.reference_value_columns[ref_col_name] = man_id
-        
+            self.reference_value_columns[ref_col_name] = man_id # Lưu man_id để biết thuộc sản phẩm nào
+      
         display_columns.append("Hành động")
-        
+      
+        # SAO CHÉP 100% từ load_three_brands_tab dòng 127-138
         self.bom_tree["columns"] = display_columns
         for col in display_columns:
             self.bom_tree.heading(col, text=col)
+            # GIẢI THÍCH: Điều chỉnh width cho các cột
             if col.startswith("Tham chiếu"):
-                width = 250
-            elif col in ["Yêu cầu kỹ thuật", "Chỉ tiêu"]:
-                width = 300
+                width = 250 # SỬA: Tăng width cho cột tham chiếu để hiển thị hết chữ dài
+            elif col in ["Mã chỉ tiêu", "Chỉ tiêu"]:
+                width = 300 # SỬA: Tăng width cho cột dài để tránh cắt chữ, cho phép kéo ngang nếu vượt màn hình
             else:
                 width = self.column_widths["bom"].get(col, 200)
-            
-            self.bom_tree.column(col, width=width, minwidth=width, stretch=False, 
-                                anchor="center" if col in ["Giá trị", "Đơn vị", "Loại chỉ tiêu", "Hành động"] or col in self.reference_columns or col in self.reference_value_columns else "w")
-        
+          
+            self.bom_tree.column(col, width=width, minwidth=width, stretch=False,
+                                anchor="center" if col in ["Mã chỉ tiêu", "Giá trị", "Đơn vị", "Loại chỉ tiêu", "Hành động"] or col in self.reference_columns or col in self.reference_value_columns else "w")
+            # GIẢI THÍCH: Thêm minwidth=width và stretch=False để các cột giữ kích thước cố định, không bị nén khi thêm nhiều cột, buộc thanh cuộn ngang xuất hiện khi tổng width vượt quá khung treeview, giúp hiển thị hết nội dung mà không mất tên cột.
+      
+        # GIẢI THÍCH SỬA: Nếu không có sản phẩm tham khảo, đặt stretch=True cho các cột chính để giới hạn độ rộng, làm thanh cuộn ngang nhỏ lại (vừa khung)
         if not self.reference_products:
             for col in display_columns:
-                if col not in ["STT", "Hành động"]:
+                if col not in ["Hành động"]:
                     self.bom_tree.column(col, stretch=True)
-        
+      
         max_height = self.max_row_heights.get("bom", 80)
-        
+      
         # Hàng 1: Tên sản phẩm tham khảo
-        values = ["", "Tên sản phẩm tham khảo", "", "", "", ""]
+        values = ["Tên sản phẩm tham khảo", "", "", "", ""]
         for col_name in self.reference_columns.keys():
             man_id = self.reference_columns[col_name]
             manufacturer_info = c.execute("SELECT product_name FROM manufacturers WHERE id=?", (man_id,)).fetchone()
             prod_name = manufacturer_info[0] if manufacturer_info else ""
             values.append(prod_name or "Nhập tên sản phẩm")
-            
+          
+            # Hàng 1 - Cho phép chỉnh sửa cột tham chiếu
             ref_key = f"ref_value_{man_id}_product_name"
-            ref_value = self.custom_indicators.get("three_brands", {}).get(ref_key, "")
+            ref_value = self.custom_indicators.get("three_brands", {}).get(ref_key, "") # SỬA: Lấy ref_value từ "three_brands" vì BOM không có custom riêng
             values.append(wrap_text(ref_value, 20))
-        values.append("")
+        values.append("") # Không có nút Xóa
         item = self.bom_tree.insert("", "end", values=values, tags=("new_reference",))
-        self.bom_indicator_map[item] = "product_name_bom"
-        
+        self.bom_indicator_map[item] = "product_name_bom" # SỬA: Thay "product_name" thành "product_name_bom" để khớp filter_ids trong export
+      
         # Hàng 2: Tên hãng
-        values = ["", "Tên hãng", "", "", "", ""]
+        values = ["Tên hãng", "", "", "", ""]
         for col_name in self.reference_columns.keys():
             man_id = self.reference_columns[col_name]
             manufacturer_info = c.execute("SELECT name FROM manufacturers WHERE id=?", (man_id,)).fetchone()
             name = manufacturer_info[0] if manufacturer_info else ""
             values.append(name or "Nhập tên hãng")
-            values.append("")
-        values.append("")
+            values.append("") # Cột tham chiếu để trống ở hàng 2
+        values.append("") # Không có nút Xóa
         item = self.bom_tree.insert("", "end", values=values, tags=("new_reference",))
-        self.bom_indicator_map[item] = "name_bom"
-        
+        self.bom_indicator_map[item] = "name_bom" # SỬA: Thay "name" thành "name_bom" để khớp filter_ids trong export
+      
         had_indicators = False
+        # SỬA MỚI: Thu thập tất cả indicator_code để kiểm tra parent
+        all_codes = [ind[1] for ind in indicators]
+        def is_parent(code, all_codes):
+            return any(c.startswith(code + '.') for c in all_codes if c != code)
+      
         # Các hàng thông số kỹ thuật
         for index, ind in enumerate(indicators, 1):
             had_indicators = True
-            ind_id, req, indc, unit = ind
-            values = [index, wrap_text(req, 50), wrap_text(indc if indc else "", 50)]
-            
-            # Cột "Giá trị"
-            so_sanh = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-            if not so_sanh:
-                so_sanh = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+            ind_id, ind_code, indc, unit = ind
+            values = [wrap_text(ind_code, 50), wrap_text(indc, 50)]
+          
+            # SỬA MỚI: Kiểm tra nếu là parent thì để trống "Giá trị", "Loại chỉ tiêu"
+            parent_tag = ()
+            if is_parent(ind_code, all_codes):
+                so_sanh = ""
+                crit_type = ""
+                unit = ""  # Để trống Đơn vị theo yêu cầu không edit, nhưng hiển thị rỗng
+                parent_tag = ("parent",)
+            else:
+                # Cột "Giá trị"
+                so_sanh = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
                 if not so_sanh:
-                    danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                    so_sanh = self.calculate_extreme_value(ind_id, self.bom_tree, self.reference_columns, danh_gia)
-                if so_sanh:
-                    self.custom_indicators.setdefault("bom", {})[f"so_sanh_{ind_id}"] = so_sanh
+                    so_sanh = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+                    if not so_sanh:
+                        danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+                        so_sanh = self.calculate_extreme_value(ind_id, self.bom_tree, self.reference_columns, danh_gia)
+                    if so_sanh:
+                        self.custom_indicators.setdefault("bom", {})[f"so_sanh_{ind_id}"] = so_sanh
+          
+                # Cột "Loại chỉ tiêu"
+                crit_type = self.custom_indicators.get("bom", {}).get(f"crit_type_{ind_id}", "CTCB")
+                if crit_type not in ["CTCB", "KCB"]:
+                    crit_type = "CTCB"
+                    self.custom_indicators["bom"][f"crit_type_{ind_id}"] = crit_type
+          
             values.append(wrap_text(so_sanh, 20))
-            
+          
             values.append(wrap_text(unit or "", 20))
-            
-            # Cột "Loại chỉ tiêu"
-            crit_type = self.custom_indicators.get("bom", {}).get(f"crit_type_{ind_id}", "CTCB")
-            if crit_type not in ["CTCB", "KCB"]:
-                crit_type = "CTCB"
-                self.custom_indicators["bom"][f"crit_type_{ind_id}"] = crit_type
             values.append(crit_type)
-            
+          
+            # GIẢI THÍCH: Thêm giá trị cho cột sản phẩm tham khảo và cột tham chiếu
             for col_name in self.reference_columns.keys():
                 man_id = self.reference_columns[col_name]
-                val = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?", 
+                val = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?",
                                 (man_id, ind_id)).fetchone()
                 specific_value = wrap_text(val[0] if val else "", 50)
                 values.append(specific_value)
-                
+              
+                # Hàng thông số kỹ thuật - Không cho chỉnh sửa cột tham chiếu
                 ref_key = f"ref_value_{man_id}_{ind_id}"
-                ref_value = self.custom_indicators.get("three_brands", {}).get(ref_key, "")
+                ref_value = self.custom_indicators.get("three_brands", {}).get(ref_key, "") # SỬA: Lấy ref_value từ "three_brands" vì BOM không có custom riêng
                 values.append(wrap_text(ref_value, 20))
-            
+          
             values.append("Xóa")
-            
+          
             line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
-            item = self.bom_tree.insert("", "end", values=values, tags=("data_row",))
+            item = self.bom_tree.insert("", "end", values=values, tags=("data_row",) + parent_tag)
             self.bom_indicator_map[item] = ind_id
-            
+          
             self.check_and_mark_row(self.bom_tree, item, ind_id, so_sanh, None, "bom")
-            
+          
             height = line_count * 30
             max_height = max(max_height, height)
-        
+      
         if had_indicators:
             max_height = min(max_height, 120)
             self.max_row_heights["bom"] = max_height
             style = ttk.Style()
             style.configure("Custom.Treeview", rowheight=max_height)
             style.configure("DataRow.Treeview", rowheight=max_height)
-        
+      
         conn.close()
 
     def load_dmkt_tab(self):
         """
-        GIẢI THÍCH: Load tab DMKT
-        - SỬA: Hiển thị chỉ tiêu "Chủng loại" đầu tiên
+        GIẢI THÍCH: Load tab DMKT - ĐỒNG BỘ với project_manager.py
+        - Hiển thị header với "- "
+        - Hiển thị item với "+ "
+        - Cascade từ bom
+        - SỬA: Khi yêu cầu kỹ thuật không có chỉ tiêu (tức là indicator rỗng hoặc không có sub-indicator), thì không cần thêm hàng "+ hiển thị chỉ tiêu" nữa, mà hiển thị các thông số giá trị, đơn vị, hành động ngay tại hàng yêu cầu kỹ thuật (header). Nếu có chỉ tiêu (indicator không rỗng), thì giữ nguyên logic cũ: header rỗng, sub rows với "+ indicator".
+        - SỬA: Sửa STT: header là 1,2,3,...; sub là 1.1,1.2,...
         """
         if not self.selected_type:
             return
-        
+      
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        
+      
+        # SỬA: Lấy type_id từ self.selected_type
         type_id_result = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
         if not type_id_result:
             conn.close()
             return
         type_id = type_id_result[0]
-        
+      
         hidden_ids = self.deleted_indicators.get("dmkt", set())
         placeholders = ','.join('?' * len(hidden_ids)) if hidden_ids else '0'
-        
-        # SỬA: ORDER BY để "Chủng loại" lên đầu
+      
         indicators = c.execute(f"""
-            SELECT id, requirement, indicator, unit 
-            FROM indicators 
-            WHERE type_id = ? AND id NOT IN ({placeholders}) 
+            SELECT id, indicator_code, indicator, unit
+            FROM indicators
+            WHERE type_id = ? AND id NOT IN ({placeholders})
         """, (type_id,) + tuple(hidden_ids)).fetchall()
-        
+      
         self.dmkt_tree.delete(*self.dmkt_tree.get_children())
-        self.dmkt_tree["columns"] = ("STT", "Yêu cầu kỹ thuật", "Giá trị", "Đơn vị", "Hành động")
+        self.dmkt_tree["columns"] = ("Mã chỉ tiêu", "Yêu cầu kỹ thuật", "Giá trị", "Đơn vị", "Hành động")
         for col in self.dmkt_tree["columns"]:
             self.dmkt_tree.heading(col, text=col)
-            self.dmkt_tree.column(col, width=self.column_widths["dmkt"].get(col, 200), 
-                                anchor="center" if col in ["STT","Giá trị", "Đơn vị", "Hành động"] else "w")
-        
+            self.dmkt_tree.column(col, width=self.column_widths["dmkt"].get(col, 200),
+                                anchor="center" if col in ["Mã chỉ tiêu", "Giá trị", "Đơn vị", "Hành động"] else "w")
+      
         self.dmkt_indicator_map.clear()
         max_height = self.max_row_heights["dmkt"]
-        req_number = 1
-        
-        groups = defaultdict(list)
+      
+        # SỬA MỚI: Thu thập tất cả indicator_code để kiểm tra parent
+        all_codes = [ind[1] for ind in indicators]
+        def is_parent(code, all_codes):
+            return any(c.startswith(code + '.') for c in all_codes if c != code)
+      
+        # SỬA: Bỏ phân cấp, loop trực tiếp qua từng indicator, mỗi hàng độc lập
         for ind in indicators:
-            groups[ind[1]].append(ind)
-        
-        for req, ind_list in groups.items():
-            if not ind_list:
-                continue
-            
-            # SỬA: Xử lý trường hợp indicator là None (chủng loại)
-            has_indicator = any(ind[2] and ind[2].strip() for ind in ind_list)
-            is_single_no_indicator = (len(ind_list) == 1 and (not ind_list[0][2] or not ind_list[0][2].strip()))
-            
-            if is_single_no_indicator:
-                ind_id, req, indc, unit = ind_list[0]
-                
+            ind_id, ind_code, indc, unit = ind
+          
+            # SỬA MỚI: Kiểm tra nếu là parent thì để trống "Giá trị", "Đơn vị"
+            parent_tag = ()
+            if is_parent(ind_code, all_codes):
+                so_sanh = ""
+                unit = ""  # Để trống Đơn vị theo yêu cầu không edit, nhưng hiển thị rỗng
+                parent_tag = ("parent",)
+            else:
+                # GIẢI THÍCH: Cascade từ bom
                 so_sanh = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
                 if not so_sanh:
                     bom_value = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
                     if not bom_value:
                         hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
                         if not hang_value:
-                            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                            hang_value = self.calculate_extreme_value(ind_id, self.dmkt_tree, self.reference_columns, danh_gia)
+                            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not") # GIẢI THÍCH: Thêm lấy danh_gia để tính extreme cho dmkt, giống add_product.py.
+                            hang_value = self.calculate_extreme_value(ind_id, self.dmkt_tree, self.reference_columns, danh_gia) # GIẢI THÍCH: Thay calculate_min_value bằng calculate_extreme_value để tính giá trị extreme dựa trên danh_gia, giống add_product.py.
                         bom_value = hang_value
                     so_sanh = bom_value
-                
-                display_value = f"- {req}"
-                
-                values = [req_number, display_value, wrap_text(so_sanh or "", 20), wrap_text(unit or "", 20), "Xóa"]
-                line_count = max([str(v).count('\n') + 1 for v in values if isinstance(v, str)])
-                item = self.dmkt_tree.insert("", "end", values=values, tags=("header",))
-                self.dmkt_indicator_map[item] = ind_id
-                
-                bom_reference = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-                if not bom_reference:
-                    hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                    if not hang_reference:
-                        danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                        hang_reference = self.calculate_extreme_value(ind_id, self.dmkt_tree, self.reference_columns, danh_gia)
-                    bom_reference = hang_reference
-                self.check_and_mark_row(self.dmkt_tree, item, ind_id, so_sanh, bom_reference, "dmkt")
-                
-                height = line_count * 30
-                max_height = max(max_height, height)
-                req_number += 1
-            
-            else:
-                values = [req_number, f"- {req}", "", "", "Xóa"]
-                line_count = 1
-                item = self.dmkt_tree.insert("", "end", values=values, tags=("header",))
-                self.dmkt_indicator_map[item] = ind_list[0][0]
-                height = line_count * 30
-                max_height = max(max_height, height)
-                
-                sub_stt = 1
-                for ind in ind_list:
-                    ind_id, req, indc, unit = ind
-                    if not indc or not indc.strip():  # SỬA: Kiểm tra None và rỗng
-                        continue
-                    
-                    so_sanh = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
-                    if not so_sanh:
-                        bom_value = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-                        if not bom_value:
-                            hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                            if not hang_value:
-                                danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                                hang_value = self.calculate_extreme_value(ind_id, self.dmkt_tree, self.reference_columns, danh_gia)
-                            bom_value = hang_value
-                        so_sanh = bom_value
-                    
-                    display_value = f"+ {indc}"
-                    
-                    values = [f"{req_number}.{sub_stt}", display_value, wrap_text(so_sanh or "", 20), wrap_text(unit or "", 20), "Xóa"]
-                    line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
-                    item = self.dmkt_tree.insert("", "end", values=values, tags=("data_row",))
-                    self.dmkt_indicator_map[item] = ind_id
-                    
-                    bom_reference = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-                    if not bom_reference:
-                        hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                        if not hang_reference:
-                            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                            hang_reference = self.calculate_extreme_value(ind_id, self.dmkt_tree, self.reference_columns, danh_gia)
-                        bom_reference = hang_reference
-                    self.check_and_mark_row(self.dmkt_tree, item, ind_id, so_sanh, bom_reference, "dmkt")
-                    
-                    height = line_count * 30
-                    max_height = max(max_height, height)
-                    sub_stt += 1
-                
-                req_number += 1
-        
+          
+            # SỬA: Display với mã chỉ tiêu = ind_code, yêu cầu kỹ thuật = indc (indicator)
+            values = [wrap_text(ind_code, 50), wrap_text(indc, 50), wrap_text(so_sanh or "", 20), wrap_text(unit or "", 20), "Xóa"]
+            line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
+            item = self.dmkt_tree.insert("", "end", values=values, tags=("data_row",) + parent_tag)
+            self.dmkt_indicator_map[item] = ind_id
+          
+            # GIẢI THÍCH: Tham chiếu từ bom
+            bom_reference = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
+            if not bom_reference:
+                hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+                if not hang_reference:
+                    danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not") # GIẢI THÍCH: Thêm lấy danh_gia để tính extreme cho dmkt tham chiếu, giống add_product.py.
+                    hang_reference = self.calculate_extreme_value(ind_id, self.dmkt_tree, self.reference_columns, danh_gia) # GIẢI THÍCH: Thay calculate_min_value bằng calculate_extreme_value để tính giá trị extreme dựa trên danh_gia, giống add_product.py.
+                bom_reference = hang_reference
+            self.check_and_mark_row(self.dmkt_tree, item, ind_id, so_sanh, bom_reference, "dmkt")
+          
+            height = line_count * 30
+            max_height = max(max_height, height)
+      
         max_height = min(max_height, 120)
         self.max_row_heights["dmkt"] = max_height
         style = ttk.Style()
@@ -1258,58 +1241,53 @@ class DetailProjectProduct:
         conn.close()
 
     def load_ctkt_bo_tab(self):
-        """
-        GIẢI THÍCH: Load tab CTKT bộ
-        - SỬA: Hiển thị chỉ tiêu "Chủng loại" đầu tiên
-        """
         if not self.selected_type:
             return
-        
+      
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        
+      
         type_id_result = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
         if not type_id_result:
             conn.close()
             return
         type_id = type_id_result[0]
-        
+      
         hidden_ids = self.deleted_indicators.get("ctkt_bo", set())
         placeholders = ','.join('?' * len(hidden_ids)) if hidden_ids else '0'
-        
-        # SỬA: ORDER BY để "Chủng loại" lên đầu
+      
         indicators = c.execute(f"""
-            SELECT id, requirement, indicator, unit 
-            FROM indicators 
-            WHERE type_id = ? AND id NOT IN ({placeholders}) 
+            SELECT id, indicator_code, indicator, unit
+            FROM indicators
+            WHERE type_id = ? AND id NOT IN ({placeholders})
         """, (type_id,) + tuple(hidden_ids)).fetchall()
-        
+      
         self.ctkt_bo_tree.delete(*self.ctkt_bo_tree.get_children())
-        self.ctkt_bo_tree["columns"] = ("TT", "Chỉ tiêu", "Đơn vị", "Giá trị", "Hành động")
+        self.ctkt_bo_tree["columns"] = ("Mã chỉ tiêu", "Chỉ tiêu", "Đơn vị", "Giá trị", "Hành động")
         for col in self.ctkt_bo_tree["columns"]:
             self.ctkt_bo_tree.heading(col, text=col)
-            self.ctkt_bo_tree.column(col, width=self.column_widths["ctkt_bo"].get(col, 300), 
-                                    anchor="center" if col in ["Đơn vị", "Giá trị", "Hành động"] else "w")
-        
+            self.ctkt_bo_tree.column(col, width=self.column_widths["ctkt_bo"].get(col, 300),
+                                    anchor="center" if col in ["Mã chỉ tiêu", "Đơn vị", "Giá trị", "Hành động"] else "w")
+      
         self.ctkt_bo_indicator_map.clear()
         max_height = self.max_row_heights["ctkt_bo"]
-        req_number = 1
-        
-        groups = defaultdict(list)
+      
+        # SỬA MỚI: Thu thập tất cả indicator_code để kiểm tra parent
+        all_codes = [ind[1] for ind in indicators]
+        def is_parent(code, all_codes):
+            return any(c.startswith(code + '.') for c in all_codes if c != code)
+      
+        # SỬA: Bỏ phân cấp, loop trực tiếp qua từng indicator, mỗi hàng độc lập
         for ind in indicators:
-            groups[ind[1]].append(ind)
-        
-        for req, ind_list in groups.items():
-            if not ind_list:
-                continue
-            
-            # SỬA: Xử lý trường hợp indicator là None (chủng loại)
-            has_indicator = any(ind[2] and ind[2].strip() for ind in ind_list)
-            is_single_no_indicator = (len(ind_list) == 1 and (not ind_list[0][2] or not ind_list[0][2].strip()))
-            
-            if is_single_no_indicator:
-                ind_id, req, indc, unit = ind_list[0]
-                
+            ind_id, ind_code, indc, unit = ind
+              
+            # SỬA MỚI: Kiểm tra nếu là parent thì để trống "Giá trị", "Đơn vị"
+            parent_tag = ()
+            if is_parent(ind_code, all_codes):
+                gia_tri = ""
+                unit = ""  # Để trống Đơn vị theo yêu cầu không edit, nhưng hiển thị rỗng
+                parent_tag = ("parent",)
+            else:
                 gia_tri = self.custom_indicators.get("ctkt_bo", {}).get(f"gia_tri_{ind_id}", "")
                 if not gia_tri:
                     dmkt_value = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
@@ -1326,113 +1304,45 @@ class DetailProjectProduct:
                             ctkt_ms_value = bom_value
                         dmkt_value = ctkt_ms_value
                     gia_tri = dmkt_value
-                
-                danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                display_indc = req
-                if danh_gia == ">=":
-                    display_indc += ", không nhỏ hơn"
-                elif danh_gia == "<=":
-                    display_indc += ", không lớn hơn"
-                elif danh_gia == "=":
-                    display_indc += ", bằng"
-                elif danh_gia == ">":
-                    display_indc += ", lớn hơn"
-                elif danh_gia == "<":
-                    display_indc += ", nhỏ hơn"
-                
-                values = [req_number, wrap_text(display_indc, 50), wrap_text(unit or "-", 20), wrap_text(gia_tri, 50), "Xóa"]
-                line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
-                item = self.ctkt_bo_tree.insert("", "end", values=values, tags=("header",))
-                self.ctkt_bo_indicator_map[item] = ind_id
-                
-                dmkt_reference = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
-                if not dmkt_reference:
-                    ctkt_ms_reference = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
-                    if not ctkt_ms_reference:
-                        bom_reference = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-                        if not bom_reference:
-                            hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                            if not hang_reference:
-                                danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                                hang_reference = self.calculate_extreme_value(ind_id, self.ctkt_bo_tree, self.reference_columns, danh_gia)
-                            bom_reference = hang_reference
-                        ctkt_ms_reference = bom_reference
-                    dmkt_reference = ctkt_ms_reference
-                self.check_and_mark_row(self.ctkt_bo_tree, item, ind_id, gia_tri, dmkt_reference, "ctkt_bo")
-                
-                height = line_count * 30
-                max_height = max(max_height, height)
-            
-            else:
-                values = [req_number, wrap_text(req, 50), "", "", "Xóa"]
-                line_count = values[1].count('\n') + 1
-                item = self.ctkt_bo_tree.insert("", "end", values=values, tags=("header",))
-                self.ctkt_bo_indicator_map[item] = ind_list[0][0]
-                height = line_count * 30
-                max_height = max(max_height, height)
-                
-                sub_stt = 1
-                for ind in ind_list:
-                    ind_id, req, indc, unit = ind
-                    if not indc.strip():
-                        continue
-                    
-                    gia_tri = self.custom_indicators.get("ctkt_bo", {}).get(f"gia_tri_{ind_id}", "")
-                    if not gia_tri:
-                        dmkt_value = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
-                        if not dmkt_value:
-                            ctkt_ms_value = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
-                            if not ctkt_ms_value:
-                                bom_value = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-                                if not bom_value:
-                                    hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                                    if not hang_value:
-                                        danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                                        hang_value = self.calculate_extreme_value(ind_id, self.ctkt_bo_tree, self.reference_columns, danh_gia)
-                                    bom_value = hang_value
-                                ctkt_ms_value = bom_value
-                            dmkt_value = ctkt_ms_value
-                        gia_tri = dmkt_value
-                    
-                    danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                    display_indc = indc
-                    if danh_gia == ">=":
-                        display_indc += ", không nhỏ hơn"
-                    elif danh_gia == "<=":
-                        display_indc += ", không lớn hơn"
-                    elif danh_gia == "=":
-                        display_indc += ", bằng"
-                    elif danh_gia == ">":
-                        display_indc += ", lớn hơn"
-                    elif danh_gia == "<":
-                        display_indc += ", nhỏ hơn"
-                    
-                    values = [f"{req_number}.{sub_stt}", wrap_text(display_indc, 50), wrap_text(unit or "-", 20), wrap_text(gia_tri, 50), "Xóa"]
-                    line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
-                    item = self.ctkt_bo_tree.insert("", "end", values=values, tags=("data_row",))
-                    self.ctkt_bo_indicator_map[item] = ind_id
-                    
-                    dmkt_reference = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
-                    if not dmkt_reference:
-                        ctkt_ms_reference = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
-                        if not ctkt_ms_reference:
-                            bom_reference = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
-                            if not bom_reference:
-                                hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                                if not hang_reference:
-                                    danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                                    hang_reference = self.calculate_extreme_value(ind_id, self.ctkt_bo_tree, self.reference_columns, danh_gia)
-                                bom_reference = hang_reference
-                            ctkt_ms_reference = bom_reference
-                        dmkt_reference = ctkt_ms_reference
-                    self.check_and_mark_row(self.ctkt_bo_tree, item, ind_id, gia_tri, dmkt_reference, "ctkt_bo")
-                    
-                    height = line_count * 30
-                    max_height = max(max_height, height)
-                    sub_stt += 1
-            
-            req_number += 1
-        
+              
+            # SỬA: Luôn thêm mô tả dựa trên danh_gia, kể cả khi gia_tri rỗng hoặc không phải số nguyên
+            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+            display_indc = indc
+            if danh_gia == ">=":
+                display_indc += ", không nhỏ hơn"
+            elif danh_gia == "<=":
+                display_indc += ", không lớn hơn"
+            elif danh_gia == "=":
+                display_indc += ", bằng"
+            elif danh_gia == ">":
+                display_indc += ", lớn hơn"
+            elif danh_gia == "<":
+                display_indc += ", nhỏ hơn"
+            # Không thêm gì nếu "not"
+              
+            values = [wrap_text(ind_code, 50), wrap_text(display_indc, 50), wrap_text(unit or "-", 20), wrap_text(gia_tri, 50), "Xóa"]
+            line_count = max([v.count('\n') + 1 for v in values if isinstance(v, str)])
+            item = self.ctkt_bo_tree.insert("", "end", values=values, tags=("data_row",) + parent_tag)
+            self.ctkt_bo_indicator_map[item] = ind_id
+              
+            dmkt_reference = self.custom_indicators.get("dmkt", {}).get(f"so_sanh_{ind_id}", "")
+            if not dmkt_reference:
+                ctkt_ms_reference = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
+                if not ctkt_ms_reference:
+                    bom_reference = self.custom_indicators.get("bom", {}).get(f"so_sanh_{ind_id}", "")
+                    if not bom_reference:
+                        hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+                        if not hang_reference:
+                            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+                            hang_reference = self.calculate_extreme_value(ind_id, self.ctkt_bo_tree, self.reference_columns, danh_gia)
+                        bom_reference = hang_reference
+                    ctkt_ms_reference = bom_reference
+                dmkt_reference = ctkt_ms_reference
+            self.check_and_mark_row(self.ctkt_bo_tree, item, ind_id, gia_tri, dmkt_reference, "ctkt_bo")
+              
+            height = line_count * 30
+            max_height = max(max_height, height)
+      
         max_height = min(max_height, 120)
         self.max_row_heights["ctkt_bo"] = max_height
         style = ttk.Style()
@@ -1441,89 +1351,97 @@ class DetailProjectProduct:
         conn.close()
 
     def load_ctkt_mua_sam_tab(self):
-        """
-        GIẢI THÍCH: Load tab CTKT mua sắm
-        - SỬA: Hiển thị chỉ tiêu "Chủng loại" đầu tiên
-        """
         if not self.selected_type:
             return
-        
+     
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        
+     
         type_id = c.execute("SELECT id FROM product_types WHERE name=?", (self.selected_type,)).fetchone()
         if type_id:
             type_id = type_id[0]
-        
+     
         hidden_ids = self.deleted_indicators.get("ctkt_mua_sam", set())
         placeholders = ','.join('?' * len(hidden_ids)) if hidden_ids else '0'
-        
-        # SỬA: ORDER BY để "Chủng loại" lên đầu
+     
         indicators = c.execute(f"""
-            SELECT id, requirement, indicator, unit
+            SELECT id, indicator_code, indicator, unit
             FROM indicators
             WHERE type_id = ? AND id NOT IN ({placeholders})
         """, (type_id,) + tuple(hidden_ids)).fetchall()
-        
+     
         self.ctkt_mua_sam_tree.delete(*self.ctkt_mua_sam_tree.get_children())
-        self.ctkt_mua_sam_tree["columns"] = ("STT", "Chỉ tiêu kỹ thuật chi tiết", "Yêu cầu kỹ thuật",
+        self.ctkt_mua_sam_tree["columns"] = ("Mã chỉ tiêu", "Chỉ tiêu kỹ thuật chi tiết",
                                             "Giá trị", "Đơn vị", "Tiêu chí đánh giá", "Loại chỉ tiêu", "Hành động")
-        
+     
         for col in self.ctkt_mua_sam_tree["columns"]:
             self.ctkt_mua_sam_tree.heading(col, text=col)
-            if col == "Chỉ tiêu kỹ thuật chi tiết":
+            if col == "Mã chỉ tiêu":
                 width = 250
-            elif col == "Yêu cầu kỹ thuật":
+            elif col == "Chỉ tiêu kỹ thuật chi tiết":
                 width = 200
             elif col == "Tiêu chí đánh giá":
                 width = 450
             else:
                 width = self.column_widths["ctkt_mua_sam"].get(col, 300)
-            
+         
             self.ctkt_mua_sam_tree.column(col, width=width,
-                                        anchor="center" if col in ["STT", "Giá trị", "Đơn vị", "Loại chỉ tiêu", "Hành động"] else "w")
-        
+                                        anchor="center" if col in ["Mã chỉ tiêu", "Giá trị", "Đơn vị", "Loại chỉ tiêu", "Hành động"] else "w")
+     
         self.ctkt_mua_sam_indicator_map.clear()
         max_height = 120
         req_number = 1
-        
+     
         groups = defaultdict(list)
         for ind in indicators:
             groups[ind[1]].append(ind)
-        
+     
+        # SỬA MỚI: Thu thập tất cả indicator_code để kiểm tra parent (req là indicator_code)
+        all_codes = list(groups.keys())
+        def is_parent(code, all_codes):
+            return any(c.startswith(code + '.') for c in all_codes if c != code)
+     
         for req, ind_list in groups.items():
             if not ind_list:
                 continue
-            
+         
             sub_stt = 1
-            
+         
             first_ind = ind_list[0]
             ind_id = first_ind[0]
             unit = first_ind[3] or ""
-            
-            so_sanh = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
-            if not so_sanh:
-                hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                if not hang_value:
-                    danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                    hang_value = self.calculate_extreme_value(ind_id, self.three_brands_tree, self.reference_columns, danh_gia)
-                so_sanh = hang_value
-                self.custom_indicators.setdefault("ctkt_mua_sam", {})[f"so_sanh_{ind_id}"] = so_sanh
-            
+         
+            # SỬA MỚI: Di chuyển gán yeu_cau_str ra ngoài if is_parent để tránh lỗi UnboundLocalError
             yeu_cau_str = first_ind[2] or ""
-            
-            if not yeu_cau_str:
-                yeu_cau_str = req
-            
-            custom_tieu_chi = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"tieu_chi_{ind_id}", "")
-            if custom_tieu_chi:
-                tieu_chi_raw = custom_tieu_chi
+         
+            # SỬA MỚI: Kiểm tra nếu là parent thì để trống "Giá trị", "Đơn vị", "Tiêu chí đánh giá", "Loại chỉ tiêu"
+            parent_tag = ()
+            if is_parent(req, all_codes):
+                so_sanh = ""
+                unit = ""
+                crit_type = ""
+                tieu_chi_display = ""
+                tieu_chi_raw = ""
+                parent_tag = ("parent",)
             else:
-                is_numeric = re.match(r'^-?\d+(\.\d+)?', str(so_sanh).strip())
+                so_sanh = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
+                if not so_sanh:
+                    hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+                    if not hang_value:
+                        danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+                        hang_value = self.calculate_extreme_value(ind_id, self.three_brands_tree, self.reference_columns, danh_gia)
+                    so_sanh = hang_value
+                    self.custom_indicators.setdefault("ctkt_mua_sam", {})[f"so_sanh_{ind_id}"] = so_sanh
+         
+                # GIẢI THÍCH SỬA: Nếu yeu_cau_str (indicator) rỗng (tức yêu cầu kỹ thuật không có chỉ tiêu), thì dùng req (requirement) thay thế để xây dựng tiêu chí đánh giá.
+                if not yeu_cau_str:
+                    yeu_cau_str = req # Sử dụng Yêu cầu kỹ thuật (req) nếu không có chỉ tiêu
+         
+                is_numeric = re.match(r'^-?\d+(\.\d+)?$', str(so_sanh).strip())
                 unit_str = f" {unit}" if unit else ""
-                
+         
                 danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                
+         
                 if is_numeric and yeu_cau_str:
                     if danh_gia == "<=":
                         dat_line = f"- Đạt: {yeu_cau_str} ≤ {so_sanh}{unit_str}"
@@ -1546,18 +1464,18 @@ class DetailProjectProduct:
                 else:
                     dat_line = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật"
                     khong_dat_line = f"- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
-                
+         
+                tieu_chi_display = f"{dat_line}\r\n{khong_dat_line}"
+         
+                crit_type = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"crit_type_{ind_id}", "CTCB")
+                if crit_type not in ["CTCB", "KCB"]:
+                    crit_type = "CTCB"
+                    self.custom_indicators["ctkt_mua_sam"][f"crit_type_{ind_id}"] = crit_type
+         
                 tieu_chi_raw = f"{dat_line}\n{khong_dat_line}"
                 self.custom_indicators["ctkt_mua_sam"][f"tieu_chi_{ind_id}"] = tieu_chi_raw
-
-            tieu_chi_display = f"{tieu_chi_raw.replace('\n', '\r\n')}"
-
-            crit_type = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"crit_type_{ind_id}", "CTCB")
-            if crit_type not in ["CTCB", "KCB"]:
-                crit_type = "CTCB"
-                self.custom_indicators["ctkt_mua_sam"][f"crit_type_{ind_id}"] = crit_type
-            
-            values = [f"{req_number}.{sub_stt}",
+         
+            values = [
                     wrap_text(req, 40),
                     wrap_text(yeu_cau_str, 30),
                     wrap_text(so_sanh, 20),
@@ -1565,47 +1483,54 @@ class DetailProjectProduct:
                     tieu_chi_display,
                     crit_type,
                     "Xóa"]
-            
-            item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("data_row", "group_header"))
+         
+            item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("data_row", "group_header") + parent_tag)
             self.ctkt_mua_sam_indicator_map[item] = ind_id
-            
+         
             hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
             if not hang_reference:
                 danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                hang_reference = self.calculate_extreme_value(ind_id, self.ctkt_mua_sam_tree, self.reference_columns, danh_gia)
+                hang_reference = self.calculate_extreme_value(ind_id, self.three_brands_tree, self.reference_columns, danh_gia)
             self.check_and_mark_row(self.ctkt_mua_sam_tree, item, ind_id, so_sanh, tieu_chi_raw, "ctkt_mua_sam")
-            
+         
             height = 120
             max_height = max(max_height, height)
             sub_stt += 1
-            
+         
             for sub_ind in ind_list[1:]:
                 ind_id = sub_ind[0]
                 unit = sub_ind[3] or ""
-                
-                so_sanh = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
-                if not so_sanh:
-                    hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
-                    if not hang_value:
-                        danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                        hang_value = self.calculate_extreme_value(ind_id, self.ctkt_mua_sam_tree, self.reference_columns, danh_gia)
-                    so_sanh = hang_value
-                    self.custom_indicators.setdefault("ctkt_mua_sam", {})[f"so_sanh_{ind_id}"] = so_sanh
-                
+             
+                # SỬA MỚI: Di chuyển gán yeu_cau_str ra ngoài if is_parent để tránh lỗi UnboundLocalError
                 yeu_cau_str = sub_ind[2] or ""
-                
-                if not yeu_cau_str:
-                    yeu_cau_str = req
-                
-                custom_tieu_chi = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"tieu_chi_{ind_id}", "")
-                if custom_tieu_chi:
-                    tieu_chi_raw = custom_tieu_chi
+             
+                parent_tag = ()
+                if is_parent(sub_ind[1], all_codes):
+                    so_sanh = ""
+                    unit = ""
+                    crit_type = ""
+                    tieu_chi_display = ""
+                    tieu_chi_raw = ""
+                    parent_tag = ("parent",)
                 else:
-                    is_numeric = re.match(r'^-?\d+(\.\d+)?', str(so_sanh).strip())
+                    so_sanh = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"so_sanh_{ind_id}", "")
+                    if not so_sanh:
+                        hang_value = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
+                        if not hang_value:
+                            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+                            hang_value = self.calculate_extreme_value(ind_id, self.ctkt_mua_sam_tree, self.reference_columns, danh_gia)
+                        so_sanh = hang_value
+                        self.custom_indicators.setdefault("ctkt_mua_sam", {})[f"so_sanh_{ind_id}"] = so_sanh
+             
+                    # GIẢI THÍCH SỬA: Tương tự, nếu yeu_cau_str rỗng (dù ít xảy ra ở sub_ind), dùng req thay thế.
+                    if not yeu_cau_str:
+                        yeu_cau_str = req
+             
+                    is_numeric = re.match(r'^-?\d+(\.\d+)?$', str(so_sanh).strip())
                     unit_str = f" {unit}" if unit else ""
-                    
+             
                     danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                    
+             
                     if is_numeric and yeu_cau_str:
                         if danh_gia == "<=":
                             dat_line = f"- Đạt: {yeu_cau_str} ≤ {so_sanh}{unit_str}"
@@ -1628,18 +1553,18 @@ class DetailProjectProduct:
                     else:
                         dat_line = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật"
                         khong_dat_line = f"- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
-                    
+             
+                    tieu_chi_display = f"{dat_line}\r\n{khong_dat_line}"
+             
+                    crit_type = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"crit_type_{ind_id}", "CTCB")
+                    if crit_type not in ["CTCB", "KCB"]:
+                        crit_type = "CTCB"
+                        self.custom_indicators["ctkt_mua_sam"][f"crit_type_{ind_id}"] = crit_type
+             
                     tieu_chi_raw = f"{dat_line}\n{khong_dat_line}"
                     self.custom_indicators["ctkt_mua_sam"][f"tieu_chi_{ind_id}"] = tieu_chi_raw
-                
-                tieu_chi_display = f"{tieu_chi_raw.replace('\n', '\r\n')}"
-                
-                crit_type = self.custom_indicators.get("ctkt_mua_sam", {}).get(f"crit_type_{ind_id}", "CTCB")
-                if crit_type not in ["CTCB", "KCB"]:
-                    crit_type = "CTCB"
-                    self.custom_indicators["ctkt_mua_sam"][f"crit_type_{ind_id}"] = crit_type
-                
-                values = [f"{req_number}.{sub_stt}",
+             
+                values = [
                         "",
                         wrap_text(yeu_cau_str, 30),
                         wrap_text(so_sanh, 20),
@@ -1647,59 +1572,88 @@ class DetailProjectProduct:
                         tieu_chi_display,
                         crit_type,
                         "Xóa"]
-                
-                item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("data_row",))
+             
+                item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("data_row",) + parent_tag)
                 self.ctkt_mua_sam_indicator_map[item] = ind_id
-                
+             
                 hang_reference = self.custom_indicators.get("three_brands", {}).get(f"so_sanh_{ind_id}", "")
                 if not hang_reference:
                     danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
                     hang_reference = self.calculate_extreme_value(ind_id, self.ctkt_mua_sam_tree, self.reference_columns, danh_gia)
                 self.check_and_mark_row(self.ctkt_mua_sam_tree, item, ind_id, so_sanh, tieu_chi_raw, "ctkt_mua_sam")
-                
+             
                 height = 120
                 max_height = max(max_height, height)
                 sub_stt += 1
-            
+         
             req_number += 1
-        
-        # Xử lý "Yêu cầu khác"
-        yeu_cau_khac_stt = req_number
+     
+        # ===== PHẦN SỬA MỚI: Xử lý "Yêu cầu khác" với Mã chỉ tiêu tự động =====
         yeu_cau_khac_item = None
         for child in self.ctkt_mua_sam_tree.get_children():
             if "yeu_cau_khac" in self.ctkt_mua_sam_tree.item(child).get('tags', ()):
                 yeu_cau_khac_item = child
                 break
-        
+     
         if not yeu_cau_khac_item:
-            values = [str(yeu_cau_khac_stt), "Yêu cầu khác", "", "", "", "", "", ""]
+            # BƯỚC 1: Thu thập tất cả các Mã chỉ tiêu hiện có trong tree
+            all_codes = []
+            for child in self.ctkt_mua_sam_tree.get_children():
+                # Lấy giá trị cột đầu tiên (Mã chỉ tiêu)
+                code_value = self.ctkt_mua_sam_tree.item(child)['values'][0]
+                # Chỉ xử lý nếu mã không rỗng
+                if code_value and str(code_value).strip():
+                    all_codes.append(str(code_value).strip())
+           
+            # BƯỚC 2: Tìm số nguyên lớn nhất từ chỉ số đầu tiên của các mã phân cấp
+            max_first_index = 0
+           
+            for code in all_codes:
+                # Tách lấy phần đầu tiên trước dấu chấm đầu tiên (nếu có)
+                # Ví dụ: "2.1.1" -> "2", "3" -> "3", "2.1" -> "2"
+                first_part = code.split('.')[0] if '.' in code else code
+               
+                # Kiểm tra nếu phần đầu là số nguyên hợp lệ
+                if first_part.isdigit():
+                    current_index = int(first_part)
+                    # Lưu lại số lớn nhất
+                    max_first_index = max(max_first_index, current_index)
+           
+            # BƯỚC 3: Tính Mã chỉ tiêu mới = số lớn nhất + 1
+            # Ví dụ:
+            # - Nếu có mã "1", "2", "2.1", "2.1.1" -> max_first_index = 2 -> next_code = "3"
+            # - Nếu có mã "1", "3.2", "3.2.1" -> max_first_index = 3 -> next_code = "4"
+            next_code = str(max_first_index + 1)
+           
+            # BƯỚC 4: Tạo hàng "Yêu cầu khác" với Mã chỉ tiêu mới
+            values = [next_code, "Yêu cầu khác", "", "", "", "", ""]
             yeu_cau_khac_item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("special_header", "yeu_cau_khac"))
             self.ctkt_mua_sam_indicator_map[yeu_cau_khac_item] = "yeu_cau_khac"
             height = 30
             max_height = max(max_height, height)
-        
-        # Xử lý custom items
+        # ===== KẾT THÚC PHẦN SỬA MỚI =====
+     
+        # Xử lý custom items dưới "Yêu cầu khác" với STT dạng {yeu_cau_khac_stt}.{sub_stt}
         custom_ids = set()
         for key in self.custom_indicators.get("ctkt_mua_sam", {}).keys():
             if key.startswith("chi_tieu_") and key.split("_")[-1].startswith("-"):
                 custom_ids.add(key.split("_")[-1])
-        
+     
         sorted_custom_ids = sorted(custom_ids, key=lambda x: int(x) if x.lstrip('-').isdigit() else 0, reverse=True)
-        sub_stt = 1
-        
+     
         for custom_id_str in sorted_custom_ids:
             tieu_chi_raw = self.custom_indicators["ctkt_mua_sam"].get(f"tieu_chi_{custom_id_str}", "")
             crit_type = self.custom_indicators["ctkt_mua_sam"].get(f"crit_type_{custom_id_str}", "CTCB")
             chi_tieu = self.custom_indicators["ctkt_mua_sam"].get(f"chi_tieu_{custom_id_str}", "")
             yeu_cau = self.custom_indicators["ctkt_mua_sam"].get(f"yeu_cau_{custom_id_str}", "")
-            
+         
             if crit_type not in ["CTCB", "KCB"]:
                 crit_type = "CTCB"
                 self.custom_indicators["ctkt_mua_sam"][f"crit_type_{custom_id_str}"] = crit_type
-            
+         
             tieu_chi_display = self.format_tieu_chi_for_display(tieu_chi_raw)
-            
-            values = [f"{yeu_cau_khac_stt}.{sub_stt}",
+         
+            values = [
                     wrap_text(chi_tieu, 40),
                     wrap_text(yeu_cau, 30),
                     "",
@@ -1707,15 +1661,14 @@ class DetailProjectProduct:
                     tieu_chi_display,
                     crit_type,
                     "Xóa"]
-            
+         
             item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("data_row", "custom_single"))
             self.ctkt_mua_sam_indicator_map[item] = custom_id_str
             self.custom_rows_ctkt_ms.append(item)
-            
+         
             height = 120
             max_height = max(max_height, height)
-            sub_stt += 1
-        
+     
         max_height = min(max_height, 120)
         self.max_row_heights["ctkt_mua_sam"] = max_height
         style = ttk.Style()
@@ -1739,29 +1692,34 @@ class DetailProjectProduct:
         """
         if not self.current_tree or not self.current_tab:
             return
-        
+
         item = self.current_tree.identify_row(event.y)
         if not item:
             return
-        
+
         column = self.current_tree.identify_column(event.x)
         col_idx = int(column.replace("#", "")) - 1
         columns = self.current_tree["columns"]
         if col_idx < 0 or col_idx >= len(columns):
             return
-        
+
         col_name = columns[col_idx]
-        
+
         ind_id = self.current_indicator_map.get(item)
         if not ind_id:
             return
-        
+
         tags = self.current_tree.item(item)['tags']
-        
+
         # Vô hiệu hóa double click cho hàng "Yêu cầu khác"
         if self.current_tab == "ctkt_mua_sam" and "yeu_cau_khac" in tags:
             return
-        
+
+        # SỬA MỚI: Nếu là hàng parent, không cho edit bất kỳ cột nào trừ "Hành động"
+        if "parent" in tags and col_name != "Hành động":
+            messagebox.showinfo("Thông báo", f"Không thể chỉnh sửa cột '{col_name}' ở hàng mục cha (chỉ xóa được qua Hành động)")
+            return
+
         # XỬ LÝ ĐẶC BIỆT CHO 2 HÀNG ĐẦU TIÊN (tên sản phẩm, tên hãng)
         if self.current_tab == "three_brands" and (ind_id == "name" or ind_id == "product_name"):
             # Chỉ cho phép chỉnh sửa cột sản phẩm tham khảo và cột tham chiếu (chỉ ở hàng 1)
@@ -1814,8 +1772,8 @@ class DetailProjectProduct:
                         c.execute(f"UPDATE manufacturers SET {field}=? WHERE id=?", (new_value, man_id))
                         conn.commit()
                         
-                        self.reference_products = [(m_id, new_value if field == "name" and m_id == man_id else n, 
-                                                new_value if field == "product_name" and m_id == man_id else p) 
+                        self.reference_products = [(m_id, new_value if field == "name" and m_id == man_id else n,
+                                                new_value if field == "product_name" and m_id == man_id else p)
                                                 for m_id, n, p in self.reference_products]
                         
                         self.load_three_brands_tab()
@@ -1838,10 +1796,10 @@ class DetailProjectProduct:
             entry.bind("<Return>", save_name_entry)
             entry.bind("<FocusOut>", save_name_entry)
             return
-        
+
         # KIỂM TRA CỘT THAM CHIẾU
         is_reference_value_column = col_name.startswith("Tham chiếu")
-        
+
         # SỬA MỚI: Xử lý cột tham chiếu - Chỉ cho phép ở hàng 1 tab Hãng
         if is_reference_value_column:
             if self.current_tab == "three_brands":
@@ -1898,7 +1856,7 @@ class DetailProjectProduct:
                 # GIẢI THÍCH: Tab BOM không cho chỉnh sửa cột tham chiếu
                 messagebox.showinfo("Thông báo", "Cột tham chiếu chỉ có thể chỉnh sửa ở tab Hãng (hàng 'Tên sản phẩm tham khảo')")
                 return
-        
+
         # KIỂM TRA CHO TAB ctkt_mua_sam TỪ HÀNG "Yêu cầu khác" TRỞ ĐI
         is_after_yeu_cau_khac = False
         if self.current_tab == "ctkt_mua_sam":
@@ -1913,43 +1871,43 @@ class DetailProjectProduct:
                 item_index = list(children).index(item)
                 if item_index > yeu_cau_khac_index:
                     is_after_yeu_cau_khac = True
-        
+
         # Định nghĩa các cột có thể chỉnh sửa cho từng tab
         editable_columns = {
             "three_brands": ["Đánh giá", "Giá trị", "Loại chỉ tiêu"] + list(self.reference_columns.keys()),
             "bom": ["Giá trị", "Loại chỉ tiêu"],
-            "dmkt": ["Giá trị", "Loại chỉ tiêu"],
+            "dmkt": ["Giá trị"],
             "ctkt_bo": ["Giá trị"],
             "ctkt_mua_sam": ["Giá trị", "Đơn vị", "Tiêu chí đánh giá", "Loại chỉ tiêu"]
         }
-        
-        # Cho phép chỉnh sửa "Chỉ tiêu kỹ thuật chi tiết" và "Yêu cầu kỹ thuật" chỉ cho các hàng sau "Yêu cầu khác"
+
+        # Cho phép chỉnh sửa "Mã chỉ tiêu" và "Chỉ tiêu kỹ thuật chi tiết" chỉ cho các hàng sau "Yêu cầu khác"
         if self.current_tab == "ctkt_mua_sam" and is_after_yeu_cau_khac:
-            editable_columns["ctkt_mua_sam"] = ["Chỉ tiêu kỹ thuật chi tiết", "Yêu cầu kỹ thuật", "Giá trị", "Đơn vị", "Tiêu chí đánh giá", "Loại chỉ tiêu"]
-        
+            editable_columns["ctkt_mua_sam"] = ["Mã chỉ tiêu", "Chỉ tiêu kỹ thuật chi tiết", "Giá trị", "Đơn vị", "Tiêu chí đánh giá", "Loại chỉ tiêu"]
+
         # Kiểm tra cột có được phép chỉnh sửa không
         if col_name not in editable_columns.get(self.current_tab, []):
             return
-        
+
         # Kiểm tra cột sản phẩm tham khảo chỉ được chỉnh sửa ở tab Hãng
         if col_name in self.reference_columns and self.current_tab != "three_brands":
             messagebox.showinfo("Thông báo", "Cột sản phẩm tham khảo chỉ có thể chỉnh sửa ở tab Hãng")
             return
-        
+
         # Nếu là cột "Tiêu chí đánh giá" trong tab ctkt_mua_sam, mở giao diện chỉnh sửa
         if self.current_tab == "ctkt_mua_sam" and col_name == "Tiêu chí đánh giá":
             current_tieu_chi = self.current_tree.item(item, "values")[col_idx]
             self.open_tieu_chi_editor(self.current_tree, item, column, ind_id, current_tieu_chi)
             return
-        
+
         # Xóa entry hoặc combobox cũ nếu đang có
         if self.current_entry:
             self.current_entry.destroy()
-        
+
         bbox = self.current_tree.bbox(item, column)
         if not bbox:
             return
-        
+
         # Tạo widget chỉnh sửa tùy thuộc vào cột
         if col_name == "Loại chỉ tiêu":
             # Sử dụng Combobox cho cột Loại chỉ tiêu
@@ -1976,7 +1934,7 @@ class DetailProjectProduct:
             combobox.bind("<<ComboboxSelected>>", save_combobox)
             combobox.bind("<Return>", save_combobox)
             combobox.bind("<FocusOut>", save_combobox)
-        
+
         elif col_name == "Đánh giá" and self.current_tab == "three_brands":
             # Sử dụng Combobox cho cột Đánh giá
             combobox = ttk.Combobox(self.current_tree, values=["not", ">", "<", "=", "<=", ">="], state="readonly", font=("Arial", 12))
@@ -2019,7 +1977,7 @@ class DetailProjectProduct:
             combobox.bind("<<ComboboxSelected>>", save_danh_gia)
             combobox.bind("<Return>", save_danh_gia)
             combobox.bind("<FocusOut>", save_danh_gia)
-        
+
         else:
             # Tạo Entry cho các cột khác
             entry = tk.Entry(self.current_tree, width=20)
@@ -2137,8 +2095,8 @@ class DetailProjectProduct:
                     # Xử lý chỉnh sửa chỉ tiêu tùy chỉnh
                     if isinstance(ind_id, str) and ind_id.startswith("-"):
                         key_map = {
-                            "Chỉ tiêu kỹ thuật chi tiết": f"chi_tieu_{ind_id}",
-                            "Yêu cầu kỹ thuật": f"yeu_cau_{ind_id}",
+                            "Mã chỉ tiêu": f"chi_tieu_{ind_id}",
+                            "Chỉ tiêu kỹ thuật chi tiết": f"yeu_cau_{ind_id}",
                             "Giá trị": f"so_sanh_{ind_id}",
                             "Đơn vị": f"don_vi_{ind_id}",
                             "Loại chỉ tiêu": f"crit_type_{ind_id}"
@@ -2149,8 +2107,8 @@ class DetailProjectProduct:
                     else:
                         # Xử lý chỉ tiêu thông thường
                         key_map = {
-                            "Chỉ tiêu kỹ thuật chi tiết": f"chi_tieu_{ind_id}",
-                            "Yêu cầu kỹ thuật": f"yeu_cau_{ind_id}",
+                            "Mã chỉ tiêu": f"chi_tieu_{ind_id}",
+                            "Chỉ tiêu kỹ thuật chi tiết": f"yeu_cau_{ind_id}",
                             "Giá trị": f"so_sanh_{ind_id}",
                             "Đơn vị": f"don_vi_{ind_id}",
                             "Loại chỉ tiêu": f"crit_type_{ind_id}"
@@ -2160,7 +2118,7 @@ class DetailProjectProduct:
                             self.custom_indicators.setdefault(self.current_tab, {})[key] = new_value
                             
                             # Tự động tạo lại tiêu chí đánh giá khi thay đổi giá trị hoặc yêu cầu
-                            if col_name in ["Giá trị", "Yêu cầu kỹ thuật"]:
+                            if col_name in ["Giá trị", "Chỉ tiêu kỹ thuật chi tiết"]:
                                 self.auto_update_tieu_chi(item, ind_id)
                 
                 # Xử lý chỉnh sửa các tab khác (three_brands, bom, dmkt, ctkt_bo)
@@ -2199,7 +2157,7 @@ class DetailProjectProduct:
                         self.load_single_tab(dep_tab)
                 
                 # Kiểm tra và đánh dấu row nếu cần
-                self.check_and_mark_row(self.current_tree, item, ind_id, 
+                self.check_and_mark_row(self.current_tree, item, ind_id,
                                     self.custom_indicators.get(self.current_tab, {}).get(f"so_sanh_{ind_id}", ""),
                                     self.custom_indicators.get(self.current_tab, {}).get(f"tieu_chi_{ind_id}", "") if self.current_tab == "ctkt_mua_sam" else None,
                                     self.current_tab)
@@ -2222,24 +2180,24 @@ class DetailProjectProduct:
         try:
             # GIẢI THÍCH: Lấy các cột cần thiết
             columns = self.current_tree["columns"]
-            yeu_cau_col_idx = columns.index("Yêu cầu kỹ thuật")
+            yeu_cau_col_idx = columns.index("Chỉ tiêu kỹ thuật chi tiết")
             gia_tri_col_idx = columns.index("Giá trị")
             unit_col_idx = columns.index("Đơn vị")
             tieu_chi_col_idx = columns.index("Tiêu chí đánh giá")
-            
+           
             # GIẢI THÍCH: Lấy giá trị từ tree
             values = self.current_tree.item(item, "values")
             yeu_cau = values[yeu_cau_col_idx].replace('\n', ' ')
             gia_tri = values[gia_tri_col_idx].replace('\n', ' ')
             unit = values[unit_col_idx].replace('\n', ' ')
-            
+           
             # Lấy danh_gia từ tab Hãng
-            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")  # GIẢI THÍCH: Thêm lấy danh_gia từ tab three_brands để tạo tiêu chí đánh giá dựa trên dấu, giống add_product.py.
-            
+            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
+           
             # GIẢI THÍCH: Tạo tiêu chí đánh giá mới theo format chuẩn
             is_numeric = re.match(r'^-?\d+(\.\d+)?$', str(gia_tri).strip())
             unit_str = f" {unit}" if unit else ""
-            
+           
             if is_numeric and yeu_cau:
                 if danh_gia == "<=":
                     dat_line = f"- Đạt: {yeu_cau} ≤ {gia_tri}{unit_str}"
@@ -2262,19 +2220,19 @@ class DetailProjectProduct:
             else:
                 dat_line = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật"
                 khong_dat_line = f"- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
-            
+           
             # GIẢI THÍCH: Tạo format hiển thị với \r\n
             tieu_chi_display = f"{dat_line}\r\n{khong_dat_line}"
-            
+           
             # GIẢI THÍCH: Lưu format raw với \n vào custom_indicators
             tieu_chi_raw = f"{dat_line}\n{khong_dat_line}"
             self.custom_indicators.setdefault(self.current_tab, {})[f"tieu_chi_{ind_id}"] = tieu_chi_raw
-            
+           
             # GIẢI THÍCH: Cập nhật trực tiếp vào tree
             new_values = list(values)
             new_values[tieu_chi_col_idx] = tieu_chi_display
             self.current_tree.item(item, values=tuple(new_values))
-            
+           
         except Exception as e:
             print(f"DEBUG AUTO UPDATE TIEU CHI ERROR: {str(e)}")
 
@@ -2285,38 +2243,37 @@ class DetailProjectProduct:
         SỬA: Sử dụng grid nhất quán để tránh xung đột geometry manager
         """
         values = tree.item(item)['values']
-        
+       
         try:
-            chi_tieu_idx = self.current_tree["columns"].index("Chỉ tiêu kỹ thuật chi tiết")
-            yeu_cau_idx = self.current_tree["columns"].index("Yêu cầu kỹ thuật")
+            chi_tieu_idx = self.current_tree["columns"].index("Mã chỉ tiêu")
+            yeu_cau_idx = self.current_tree["columns"].index("Chỉ tiêu kỹ thuật chi tiết")
             gia_tri_idx = self.current_tree["columns"].index("Giá trị")
             don_vi_idx = self.current_tree["columns"].index("Đơn vị")
             tieu_chi_idx = self.current_tree["columns"].index("Tiêu chí đánh giá")
         except ValueError:
             messagebox.showerror("Lỗi", "Không tìm thấy cột cần thiết")
             return
-        
-        # SỬA: Ép kiểu str() cho tất cả values[...] để tránh lỗi nếu là int
-        chi_tieu = str(values[chi_tieu_idx]).replace('\n', ' ') if chi_tieu_idx < len(values) else ""
-        yeu_cau = str(values[yeu_cau_idx]).replace('\n', ' ') if yeu_cau_idx < len(values) else ""
-        gia_tri = str(values[gia_tri_idx]).replace('\n', ' ') if gia_tri_idx < len(values) else ""
-        don_vi = str(values[don_vi_idx]).replace('\n', ' ') if don_vi_idx < len(values) else ""
-        
+       
+        chi_tieu = values[chi_tieu_idx].replace('\n', ' ') if chi_tieu_idx < len(values) else ""
+        yeu_cau = values[yeu_cau_idx].replace('\n', ' ') if yeu_cau_idx < len(values) else ""
+        gia_tri = values[gia_tri_idx].replace('\n', ' ') if gia_tri_idx < len(values) else ""
+        don_vi = values[don_vi_idx].replace('\n', ' ') if don_vi_idx < len(values) else ""
+       
         # GIẢI THÍCH: Chuẩn hóa input - chuyển từ \r\n về \n
         current_tieu_chi = str(current_tieu_chi).replace('\r\n', '\n').replace('\r', '\n').strip()
-        
+       
         dat_text = ""
         khong_dat_text = ""
-        
+       
         if current_tieu_chi:
             lines = current_tieu_chi.split('\n')
             for line in lines:
                 line = line.strip()
                 if line.startswith("- Đạt:"):
-                    dat_text = line[7:].strip()  # Bỏ "- Đạt: "
+                    dat_text = line[7:].strip() # Bỏ "- Đạt: "
                 elif line.startswith("- Không đạt:"):
-                    khong_dat_text = line[13:].strip()  # Bỏ "- Không đạt: "
-        
+                    khong_dat_text = line[13:].strip() # Bỏ "- Không đạt: "
+       
         # GIẢI THÍCH: Tạo cửa sổ chỉnh sửa
         edit_win = tk.Toplevel(self.root)
         edit_win.title("Chỉnh sửa tiêu chí đánh giá")
@@ -2324,33 +2281,33 @@ class DetailProjectProduct:
         edit_win.resizable(True, True)
         edit_win.grid_rowconfigure(0, weight=1)
         edit_win.grid_columnconfigure(0, weight=1)
-        
+       
         main_frame = tk.Frame(edit_win, bg="white")
         main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         main_frame.grid_rowconfigure(2, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
-        
-        title_label = tk.Label(main_frame, text="Chỉnh sửa tiêu chí đánh giá", 
+       
+        title_label = tk.Label(main_frame, text="Chỉnh sửa tiêu chí đánh giá",
                             font=("Arial", 20, "bold"), bg="white")
         title_label.grid(row=0, column=0, sticky="ew", pady=(0, 25))
-        
-        info_frame = tk.LabelFrame(main_frame, text="Thông tin chỉ tiêu", 
+       
+        info_frame = tk.LabelFrame(main_frame, text="Thông tin chỉ tiêu",
                                 font=("Arial", 12, "bold"), bg="white")
         info_frame.grid(row=1, column=0, sticky="ew", pady=(0, 15))
         info_frame.grid_columnconfigure(1, weight=1)
-        
-        tk.Label(info_frame, text="Chỉ tiêu kỹ thuật chi tiết:", 
+       
+        tk.Label(info_frame, text="Mã chỉ tiêu:",
                 font=("Arial", 11, "bold"), bg="white").grid(row=0, column=0, sticky="w", padx=15, pady=12)
-        chi_tieu_label = tk.Label(info_frame, text=chi_tieu, relief="solid", borderwidth=1, bg="white", 
+        chi_tieu_label = tk.Label(info_frame, text=chi_tieu, relief="solid", borderwidth=1, bg="white",
                                 font=("Arial", 10), anchor="w", justify="left", wraplength=700)
         chi_tieu_label.grid(row=0, column=1, sticky="ew", padx=15, pady=12)
-        
-        tk.Label(info_frame, text="Yêu cầu kỹ thuật:", 
+       
+        tk.Label(info_frame, text="Chỉ tiêu kỹ thuật chi tiết:",
                 font=("Arial", 11, "bold"), bg="white").grid(row=1, column=0, sticky="w", padx=15, pady=8)
-        yeu_cau_label = tk.Label(info_frame, text=yeu_cau, relief="solid", borderwidth=1, bg="white", 
+        yeu_cau_label = tk.Label(info_frame, text=yeu_cau, relief="solid", borderwidth=1, bg="white",
                                 font=("Arial", 10), anchor="w", justify="left", wraplength=700)
         yeu_cau_label.grid(row=1, column=1, sticky="ew", padx=15, pady=8)
-        
+       
         tk.Label(info_frame, text="Giá trị:", font=("Arial", 11, "bold"), bg="white").grid(row=2, column=0, sticky="w", padx=15, pady=8)
         gia_tri_frame = tk.Frame(info_frame, bg="white")
         gia_tri_frame.grid(row=2, column=1, sticky="ew", padx=15, pady=8)
@@ -2358,122 +2315,122 @@ class DetailProjectProduct:
         gia_tri_entry.grid(row=0, column=0, sticky="ew")
         gia_tri_frame.grid_columnconfigure(0, weight=1)
         gia_tri_entry.insert(0, gia_tri)
-        
+       
         tk.Label(info_frame, text="Đơn vị:", font=("Arial", 11, "bold"), bg="white").grid(row=3, column=0, sticky="w", padx=15, pady=8)
-        don_vi_label = tk.Label(info_frame, text=don_vi, relief="solid", borderwidth=1, bg="white", 
+        don_vi_label = tk.Label(info_frame, text=don_vi, relief="solid", borderwidth=1, bg="white",
                             font=("Arial", 11), width=20, anchor="center")
         don_vi_label.grid(row=3, column=1, sticky="w", padx=15, pady=8)
-        
+       
         # GIẢI THÍCH: Frame tiêu chí đánh giá
-        tieu_chi_frame = tk.LabelFrame(main_frame, text="Tiêu chí đánh giá", 
+        tieu_chi_frame = tk.LabelFrame(main_frame, text="Tiêu chí đánh giá",
                                     font=("Arial", 12, "bold"), bg="white")
         tieu_chi_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 20))
         tieu_chi_frame.grid_columnconfigure(0, weight=1)
         tieu_chi_frame.grid_columnconfigure(1, weight=1)
         tieu_chi_frame.grid_rowconfigure(1, weight=1)
-        
+       
         # GIẢI THÍCH: Cột Đạt
         dat_label_frame = tk.Frame(tieu_chi_frame, bg="white")
         dat_label_frame.grid(row=0, column=0, sticky="w", padx=15, pady=12)
         tk.Label(dat_label_frame, text="Đạt:", font=("Arial", 13, "bold"), bg="white").grid(row=0, column=0)
-        tk.Label(dat_label_frame, text=" (Điều kiện để đạt yêu cầu)", 
+        tk.Label(dat_label_frame, text=" (Điều kiện để đạt yêu cầu)",
                 font=("Arial", 10), bg="white").grid(row=0, column=1, padx=(5, 0))
-        
-        dat_entry = tk.Text(tieu_chi_frame, height=10, width=55, wrap=tk.WORD, 
+       
+        dat_entry = tk.Text(tieu_chi_frame, height=10, width=55, wrap=tk.WORD,
                         font=("Arial", 11), relief="solid", borderwidth=1)
         dat_entry.grid(row=1, column=0, padx=15, pady=8, sticky="nsew")
         dat_entry.insert("1.0", dat_text)
         dat_entry.config(state=tk.NORMAL)
-        
+       
         # GIẢI THÍCH: Cột Không đạt
         khong_dat_label_frame = tk.Frame(tieu_chi_frame, bg="white")
         khong_dat_label_frame.grid(row=0, column=1, sticky="w", padx=15, pady=12)
         tk.Label(khong_dat_label_frame, text="Không đạt:", font=("Arial", 13, "bold"), bg="white").grid(row=0, column=0)
-        tk.Label(khong_dat_label_frame, text=" (Điều kiện không đạt yêu cầu)", 
+        tk.Label(khong_dat_label_frame, text=" (Điều kiện không đạt yêu cầu)",
                 font=("Arial", 10), bg="white").grid(row=0, column=1, padx=(5, 0))
-        
-        khong_dat_entry = tk.Text(tieu_chi_frame, height=10, width=55, wrap=tk.WORD, 
+       
+        khong_dat_entry = tk.Text(tieu_chi_frame, height=10, width=55, wrap=tk.WORD,
                                 font=("Arial", 11), relief="solid", borderwidth=1)
         khong_dat_entry.grid(row=1, column=1, padx=15, pady=8, sticky="nsew")
         khong_dat_entry.insert("1.0", khong_dat_text)
         khong_dat_entry.config(state=tk.NORMAL)
-        
+       
         # GIẢI THÍCH: Button frame
         button_frame = tk.Frame(main_frame, bg="white")
         button_frame.grid(row=3, column=0, sticky="ew", pady=25)
         button_frame.grid_columnconfigure(0, weight=1)
-        
+       
         def save_tieu_chi():
             """GIẢI THÍCH: Lưu tiêu chí đánh giá"""
             new_gia_tri = gia_tri_entry.get().strip()
             new_dat = dat_entry.get("1.0", tk.END).strip()
             new_khong_dat = khong_dat_entry.get("1.0", tk.END).strip()
-            
+           
             if not new_dat and not new_khong_dat:
                 messagebox.showerror("Lỗi", "Cần ít nhất một điều kiện!")
                 return
-            
+           
             # GIẢI THÍCH: Tạo format tiêu chí với dấu "- "
             parts = []
             if new_dat:
                 parts.append(f"- Đạt: {new_dat}")
             if new_khong_dat:
                 parts.append(f"- Không đạt: {new_khong_dat}")
-            
+           
             # GIẢI THÍCH: Format raw với \n cho lưu trữ
             new_tieu_chi_raw = "\n".join(parts)
-            
+           
             # GIẢI THÍCH: Format hiển thị với \r\n cho treeview
             new_tieu_chi_display = new_tieu_chi_raw.replace('\n', '\r\n')
-            
+           
             try:
                 if item in tree.get_children():
                     # GIẢI THÍCH: Cập nhật trực tiếp vào tree
                     tieu_chi_col_num = f"#{tieu_chi_idx + 1}"
                     tree.set(item, tieu_chi_col_num, new_tieu_chi_display)
-                    
+                   
                     # GIẢI THÍCH: Cập nhật giá trị nếu có thay đổi
                     if new_gia_tri and new_gia_tri != gia_tri:
                         gia_tri_col_num = f"#{gia_tri_idx + 1}"
                         tree.set(item, gia_tri_col_num, wrap_text(new_gia_tri, 20))
-                        
+                       
                         # GIẢI THÍCH: Cập nhật custom_indicators
                         key = f"so_sanh_{ind_id_str}"
                         self.custom_indicators.setdefault(self.current_tab, {})[key] = new_gia_tri
-                        
+                       
                         # GIẢI THÍCH: Kiểm tra và đánh dấu row
                         self.check_and_mark_row(tree, item, ind_id_str, new_gia_tri, new_tieu_chi_raw, self.current_tab)
-                    
+                   
                     # GIẢI THÍCH: Lưu format raw vào custom_indicators
                     tieu_chi_key = f"tieu_chi_{ind_id_str}"
                     self.custom_indicators.setdefault(self.current_tab, {})[tieu_chi_key] = new_tieu_chi_raw
-                    
+                   
                     # GIẢI THÍCH: Cập nhật giao diện
                     tree.update_idletasks()
-                    
+                   
                     edit_win.destroy()
                     messagebox.showinfo("Thành công", "Đã cập nhật tiêu chí đánh giá!")
-                    
+                   
             except Exception as e:
                 messagebox.showerror("Lỗi", f"Lỗi khi lưu: {str(e)}")
-        
+       
         def cancel_edit():
             """GIẢI THÍCH: Hủy chỉnh sửa"""
             edit_win.destroy()
-        
+       
         button_inner_frame = tk.Frame(button_frame, bg="white")
         button_inner_frame.grid(row=0, column=0, sticky="e")
-        
+       
         save_button = tk.Button(button_inner_frame, text="Lưu thay đổi", command=save_tieu_chi,
                             fg="black", font=("Arial", 12, "bold"),
                             width=18, height=2, relief="flat", bd=0, cursor="hand2")
         save_button.grid(row=0, column=0, padx=(0, 15))
-        
+       
         cancel_button = tk.Button(button_inner_frame, text="Hủy bỏ", command=cancel_edit,
                                 fg="black", font=("Arial", 12, "bold"),
                                 width=15, height=2, relief="flat", bd=0, cursor="hand2")
         cancel_button.grid(row=0, column=1, padx=(0, 15))
-        
+       
         # GIẢI THÍCH: Focus vào ô đầu tiên
         if dat_text:
             dat_entry.focus_set()
@@ -2481,16 +2438,16 @@ class DetailProjectProduct:
             khong_dat_entry.focus_set()
         else:
             dat_entry.focus_set()
-        
+       
         edit_win.bind('<Return>', lambda e: save_tieu_chi())
         edit_win.bind('<Escape>', lambda e: cancel_edit())
-        
+       
         # GIẢI THÍCH: Hover effects
         def on_enter(button):
             button.config(relief="raised", bd=1)
         def on_leave(button):
             button.config(relief="flat", bd=0)
-        
+       
         save_button.bind('<Enter>', lambda e: on_enter(save_button))
         save_button.bind('<Leave>', lambda e: on_leave(save_button))
         cancel_button.bind('<Enter>', lambda e: on_enter(cancel_button))
@@ -2518,7 +2475,7 @@ class DetailProjectProduct:
         # GIẢI THÍCH: Lấy thông tin chi tiết của các chỉ tiêu đã xóa
         hidden_indicators = []
         for ind_id in hidden_ids:
-            indicator_info = c.execute("SELECT requirement, indicator FROM indicators WHERE id=?", (ind_id,)).fetchone()
+            indicator_info = c.execute("SELECT indicator_code, indicator FROM indicators WHERE id=?", (ind_id,)).fetchone()
             if indicator_info:
                 hidden_indicators.append((ind_id, indicator_info[0], indicator_info[1]))
         
@@ -2539,22 +2496,22 @@ class DetailProjectProduct:
         v_scrollbar = tk.Scrollbar(tree_frame, orient="vertical")
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        restore_tree = ttk.Treeview(tree_frame, columns=("STT", "Yêu cầu kỹ thuật", "Chỉ tiêu"), 
+        restore_tree = ttk.Treeview(tree_frame, columns=("STT", "Mã chỉ tiêu", "Chỉ tiêu"),
                                     show="headings", yscrollcommand=v_scrollbar.set, selectmode="extended")
         v_scrollbar.config(command=restore_tree.yview)
         
         restore_tree.heading("STT", text="STT")
-        restore_tree.heading("Yêu cầu kỹ thuật", text="Yêu cầu kỹ thuật")
+        restore_tree.heading("Mã chỉ tiêu", text="Mã chỉ tiêu")
         restore_tree.heading("Chỉ tiêu", text="Chỉ tiêu")
         restore_tree.column("STT", width=50, anchor="center")
-        restore_tree.column("Yêu cầu kỹ thuật", width=250, anchor="w")
+        restore_tree.column("Mã chỉ tiêu", width=250, anchor="w")
         restore_tree.column("Chỉ tiêu", width=250, anchor="w")
         restore_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # GIẢI THÍCH: Thêm các chỉ tiêu đã xóa vào tree
         for index, (ind_id, req, indc) in enumerate(hidden_indicators, 1):
-            item = restore_tree.insert("", "end", values=(index, wrap_text(req, 40), wrap_text(indc, 40)), 
-                                    tags=(str(ind_id),))  # Lưu ind_id trong tags
+            item = restore_tree.insert("", "end", values=(index, wrap_text(req, 40), wrap_text(indc, 40)),
+                                    tags=(str(ind_id),)) # Lưu ind_id trong tags
         
         button_frame = tk.Frame(restore_win)
         button_frame.pack(pady=5)
@@ -2580,6 +2537,12 @@ class DetailProjectProduct:
             dependent_tabs = cascade_map.get(self.current_tab, [])
             print(f"DEBUG KHÔI PHỤC: Tab hiện tại '{self.current_tab}' - cascade khôi phục cho {dependent_tabs}")
             
+            # SỬA MỚI: Set để lưu tất cả id cần khôi phục (tránh trùng)
+            all_ids_to_restore = set()
+            
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            
             for item in selected:
                 tags = restore_tree.item(item)['tags']
                 if tags:
@@ -2589,6 +2552,21 @@ class DetailProjectProduct:
                     print(f"DEBUG LỖI: Không tìm thấy ind_id trong tags của item {item}")
                     continue
                 
+                # Thêm chính ind_id
+                all_ids_to_restore.add(ind_id)
+                
+                # SỬA MỚI: Thêm tất cả con đệ quy nếu là cha
+                descendants = self.get_all_descendants(ind_id, c)
+                all_ids_to_restore.update(descendants)
+                
+                # SỬA MỚI: Thêm tất cả tổ tiên (cha, ông,...) nếu bị xóa
+                ancestors = self.get_all_ancestors(ind_id, c)
+                all_ids_to_restore.update(ancestors)
+            
+            conn.close()
+            
+            # GIẢI THÍCH: Khôi phục tất cả id trong set
+            for ind_id in all_ids_to_restore:
                 # GIẢI THÍCH: Khôi phục gốc - xóa khỏi origin_deleted và deleted_indicators của tab hiện tại
                 if self.current_tab in self.origin_deleted and ind_id in self.origin_deleted[self.current_tab]:
                     self.origin_deleted[self.current_tab].discard(ind_id)
@@ -2622,6 +2600,72 @@ class DetailProjectProduct:
         tk.Button(button_frame, text="Khôi phục", command=do_restore_selected).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Hủy", command=restore_win.destroy).pack(side=tk.LEFT, padx=5)
 
+    def get_all_descendants(self, ind_id, cursor):
+        """
+        GIẢI THÍCH: Helper function để lấy tất cả id con đệ quy của một chỉ tiêu (dựa trên indicator_code LIKE code + '.%')
+        - Trả về set các id con (không bao gồm chính ind_id)
+        """
+        descendants = set()
+        
+        # Lấy code của ind_id
+        code = cursor.execute("SELECT indicator_code FROM indicators WHERE id=?", (ind_id,)).fetchone()
+        if not code:
+            return descendants
+        code = code[0]
+        
+        # Query tất cả id có code LIKE code + '.%'
+        con_rows = cursor.execute(
+            "SELECT id FROM indicators WHERE indicator_code LIKE ? AND type_id = (SELECT type_id FROM indicators WHERE id = ?) AND id != ?",
+            (code + '.%', ind_id, ind_id)
+        ).fetchall()
+        
+        for row in con_rows:
+            con_id = row[0]
+            descendants.add(con_id)
+            # Đệ quy lấy con của con
+            descendants.update(self.get_all_descendants(con_id, cursor))
+        
+        return descendants
+
+    def get_all_ancestors(self, ind_id, cursor):
+        """
+        GIẢI THÍCH: Helper function để lấy tất cả id tổ tiên (cha, ông,...) của một chỉ tiêu nếu bị xóa
+        - Dựa trên cắt dần indicator_code (ví dụ 1.2.1 -> 1.2 -> 1)
+        - Chỉ thêm nếu tổ tiên bị xóa (trong origin_deleted của tab hiện tại)
+        - Trả về set các id tổ tiên
+        """
+        ancestors = set()
+        
+        # Lấy code của ind_id
+        code = cursor.execute("SELECT indicator_code FROM indicators WHERE id=?", (ind_id,)).fetchone()
+        if not code:
+            return ancestors
+        code = code[0]
+        
+        # Cắt dần code để tìm cha
+        while '.' in code:
+            # Cắt đến dấu chấm cuối cùng (cha trực tiếp)
+            parent_code = code.rsplit('.', 1)[0]
+            
+            # Query id của parent_code
+            parent_id_row = cursor.execute(
+                "SELECT id FROM indicators WHERE indicator_code = ? AND type_id = (SELECT type_id FROM indicators WHERE id = ?)",
+                (parent_code, ind_id)
+            ).fetchone()
+            
+            if parent_id_row:
+                parent_id = parent_id_row[0]
+                # Chỉ thêm nếu parent bị xóa (trong origin_deleted)
+                if self.current_tab in self.origin_deleted and parent_id in self.origin_deleted[self.current_tab]:
+                    ancestors.add(parent_id)
+                    # Tiếp tục đệ quy lên ông
+                    ancestors.update(self.get_all_ancestors(parent_id, cursor))
+            
+            # Cập nhật code cho lần cắt tiếp
+            code = parent_code
+        
+        return ancestors
+
     def update_cascade_marking(self, ind_id_str, changed_tab):
         """
         GIẢI THÍCH: Cập nhật giá trị cascade sau khi một tab thay đổi giá trị
@@ -2632,10 +2676,10 @@ class DetailProjectProduct:
         # GIẢI THÍCH: Skip cascade nếu ind_id âm (custom)
         if ind_id_str.startswith('-'):
             return
-        
+       
         # GIẢI THÍCH: Định nghĩa thứ tự phụ thuộc
         tab_hierarchy = ["three_brands", "bom", "dmkt", "ctkt_bo"]
-        
+       
         try:
             changed_index = tab_hierarchy.index(changed_tab)
         except ValueError:
@@ -2644,37 +2688,37 @@ class DetailProjectProduct:
                 dependent_tab = "ctkt_mua_sam"
                 tree = getattr(self, f"{dependent_tab}_tree", None)
                 indicator_map = getattr(self, f"{dependent_tab}_indicator_map", {})
-                
+               
                 if tree:
                     # GIẢI THÍCH: Lấy giá trị từ three_brands
                     current_value = self.custom_indicators.get(changed_tab, {}).get(f"so_sanh_{ind_id_str}", "")
                     if not current_value:
                         danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id_str}", "not")
                         current_value = self.calculate_extreme_value(int(ind_id_str), getattr(self, f"{changed_tab}_tree", None), self.reference_columns, danh_gia)
-                    
+                   
                     for item, mapped_ind_id in indicator_map.items():
                         if str(mapped_ind_id) == ind_id_str and not str(mapped_ind_id).startswith('-'):
                             # GIẢI THÍCH: Cập nhật giá trị so_sanh trong ctkt_mua_sam
                             self.custom_indicators.setdefault(dependent_tab, {})[f"so_sanh_{ind_id_str}"] = current_value
-                            
+                           
                             try:
                                 # GIẢI THÍCH: Lấy các cột cần thiết để tạo lại tiêu chí
-                                yeu_cau_col_idx = tree["columns"].index("Yêu cầu kỹ thuật")
+                                yeu_cau_col_idx = tree["columns"].index("Chỉ tiêu kỹ thuật chi tiết")
                                 unit_col_idx = tree["columns"].index("Đơn vị")
                                 tieu_chi_col_idx = tree["columns"].index("Tiêu chí đánh giá")
                                 gia_tri_col_idx = tree["columns"].index("Giá trị")
-                                
+                               
                                 yeu_cau = tree.set(item, f"#{yeu_cau_col_idx + 1}").replace('\n', ' ')
                                 unit = tree.set(item, f"#{unit_col_idx + 1}").replace('\n', ' ')
-                                
+                               
                                 # GIẢI THÍCH: Cập nhật giá trị trong tree
                                 tree.set(item, f"#{gia_tri_col_idx + 1}", wrap_text(current_value, 20))
-                                
+                               
                                 # GIẢI THÍCH: Tạo tiêu chí mới dựa trên danh_gia
                                 danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id_str}", "not")
                                 is_numeric = re.match(r'^-?\d+(\.\d+)?$', str(current_value).strip())
                                 unit_str = f" {unit}" if unit else ""
-                                
+                               
                                 if is_numeric and yeu_cau:
                                     if danh_gia == "<=":
                                         new_tieu_chi = f"- Đạt: {yeu_cau} ≤ {current_value}{unit_str}\n- Không đạt: {yeu_cau} > {current_value}{unit_str}"
@@ -2690,41 +2734,41 @@ class DetailProjectProduct:
                                         new_tieu_chi = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật\n- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
                                 else:
                                     new_tieu_chi = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật\n- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
-                                
+                               
                                 # GIẢI THÍCH: Lưu tiêu chí mới
                                 tieu_chi_key = f"tieu_chi_{ind_id_str}"
                                 self.custom_indicators[dependent_tab][tieu_chi_key] = new_tieu_chi
-                                
+                               
                                 # GIẢI THÍCH: Cập nhật trực tiếp trong tree
                                 tieu_chi_col_num = f"#{tieu_chi_col_idx + 1}"
                                 tree.set(item, tieu_chi_col_num, new_tieu_chi.replace('\n', '\r\n'))
-                                
+                               
                                 # GIẢI THÍCH: Kiểm tra và đánh dấu row
                                 self.check_and_mark_row(tree, item, ind_id_str, current_value, new_tieu_chi, dependent_tab)
-                                
+                               
                             except Exception as e:
                                 print(f"DEBUG CASCADE TIEU CHI ERROR: {str(e)}")
                             break
                 return
             else:
                 return
-        
+       
         # GIẢI THÍCH: Lấy giá trị mới từ tab đã thay đổi
         current_value = self.custom_indicators.get(changed_tab, {}).get(
             f"so_sanh_{ind_id_str}" if changed_tab != "ctkt_bo" else f"gia_tri_{ind_id_str}", "")
         if not current_value:
             danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id_str}", "not")
             current_value = self.calculate_extreme_value(int(ind_id_str), getattr(self, f"{changed_tab}_tree", None), self.reference_columns, danh_gia)
-        
+       
         # GIẢI THÍCH: Cập nhật tất cả các tab sau tab đã thay đổi
         for i in range(changed_index + 1, len(tab_hierarchy)):
             dependent_tab = tab_hierarchy[i]
             tree = getattr(self, f"{dependent_tab}_tree", None)
             indicator_map = getattr(self, f"{dependent_tab}_indicator_map", {})
-            
+           
             if not tree:
                 continue
-            
+           
             # GIẢI THÍCH: Tìm item tương ứng với ind_id_str
             for item, mapped_ind_id in indicator_map.items():
                 if str(mapped_ind_id) == ind_id_str:
@@ -2735,40 +2779,40 @@ class DetailProjectProduct:
                         self.custom_indicators.setdefault(dependent_tab, {})[f"so_sanh_{ind_id_str}"] = current_value
                     elif dependent_tab == "ctkt_bo":
                         self.custom_indicators.setdefault(dependent_tab, {})[f"gia_tri_{ind_id_str}"] = current_value
-                    
+                   
                     # GIẢI THÍCH: Reload tab để cập nhật giao diện
                     self.load_single_tab(dependent_tab)
                     break
-        
+       
         # GIẢI THÍCH: Xử lý cascade cho ctkt_mua_sam
         dependent_tab = "ctkt_mua_sam"
         tree = getattr(self, f"{dependent_tab}_tree", None)
         indicator_map = getattr(self, f"{dependent_tab}_indicator_map", {})
-        
+       
         if tree and changed_tab == "three_brands":
             for item, mapped_ind_id in indicator_map.items():
                 if str(mapped_ind_id) == ind_id_str and not str(mapped_ind_id).startswith('-'):
                     # GIẢI THÍCH: Cập nhật giá trị so_sanh
                     self.custom_indicators.setdefault(dependent_tab, {})[f"so_sanh_{ind_id_str}"] = current_value
-                    
+                   
                     # GIẢI THÍCH: Tạo lại tiêu chí đánh giá
                     try:
-                        yeu_cau_col_idx = tree["columns"].index("Yêu cầu kỹ thuật")
+                        yeu_cau_col_idx = tree["columns"].index("Chỉ tiêu kỹ thuật chi tiết")
                         unit_col_idx = tree["columns"].index("Đơn vị")
                         tieu_chi_col_idx = tree["columns"].index("Tiêu chí đánh giá")
                         gia_tri_col_idx = tree["columns"].index("Giá trị")
-                        
+                       
                         yeu_cau = tree.set(item, f"#{yeu_cau_col_idx + 1}").replace('\n', ' ')
                         unit = tree.set(item, f"#{unit_col_idx + 1}").replace('\n', ' ')
-                        
+                       
                         # GIẢI THÍCH: Cập nhật giá trị trong tree
                         tree.set(item, f"#{gia_tri_col_idx + 1}", wrap_text(current_value, 20))
-                        
+                       
                         # GIẢI THÍCH: Tạo tiêu chí mới dựa trên danh_gia
                         danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id_str}", "not")
                         is_numeric = re.match(r'^-?\d+(\.\d+)?$', str(current_value).strip())
                         unit_str = f" {unit}" if unit else ""
-                        
+                       
                         if is_numeric and yeu_cau:
                             if danh_gia == "<=":
                                 new_tieu_chi = f"- Đạt: {yeu_cau} ≤ {current_value}{unit_str}\n- Không đạt: {yeu_cau} > {current_value}{unit_str}"
@@ -2784,29 +2828,30 @@ class DetailProjectProduct:
                                 new_tieu_chi = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật\n- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
                         else:
                             new_tieu_chi = f"- Đạt: hàng hóa nhà thầu chào đáp ứng yêu cầu kỹ thuật\n- Không đạt: hàng hóa nhà thầu chào không đáp ứng yêu cầu kỹ thuật"
-                        
+                       
                         # GIẢI THÍCH: Lưu tiêu chí mới
                         tieu_chi_key = f"tieu_chi_{ind_id_str}"
                         self.custom_indicators[dependent_tab][tieu_chi_key] = new_tieu_chi
-                        
+                       
                         # GIẢI THÍCH: Cập nhật trực tiếp trong tree
                         tieu_chi_col_num = f"#{tieu_chi_col_idx + 1}"
                         tree.set(item, tieu_chi_col_num, new_tieu_chi.replace('\n', '\r\n'))
-                        
+                       
                         # GIẢI THÍCH: Kiểm tra và đánh dấu row
                         self.check_and_mark_row(tree, item, ind_id_str, current_value, new_tieu_chi, dependent_tab)
-                        
+                       
                     except Exception as e:
                         print(f"DEBUG CASCADE TIEU CHI ERROR: {str(e)}")
                     break
 
+    # Sửa hàm add_custom_indicator
     def add_custom_indicator(self):
         """
         GIẢI THÍCH: Thêm chỉ tiêu tùy chỉnh cho tab CTKT mua sắm - ĐỒNG BỘ với project_manager.py
         """
         if self.current_tab != "ctkt_mua_sam":
             return
-        
+       
         # Tạo cửa sổ thêm chỉ tiêu
         add_win = tk.Toplevel(self.root)
         add_win.title("Thêm chỉ tiêu tùy chỉnh cho Yêu cầu khác")
@@ -2814,59 +2859,59 @@ class DetailProjectProduct:
         add_win.resizable(True, True)
         add_win.grid_rowconfigure(0, weight=1)
         add_win.grid_columnconfigure(0, weight=1)
-        
+       
         main_frame = tk.Frame(add_win, padx=20, pady=20)
         main_frame.grid(row=0, column=0, sticky="nsew")
         main_frame.grid_rowconfigure(1, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
-        
-        title_label = tk.Label(main_frame, text="Thêm chỉ tiêu tùy chỉnh cho Yêu cầu khác", 
+       
+        title_label = tk.Label(main_frame, text="Thêm chỉ tiêu tùy chỉnh cho Yêu cầu khác",
                             font=("Arial", 14, "bold"))
         title_label.grid(row=0, column=0, sticky="ew", pady=(0, 20))
-        
-        input_frame = tk.LabelFrame(main_frame, text="Thông tin chỉ tiêu", 
+       
+        input_frame = tk.LabelFrame(main_frame, text="Thông tin chỉ tiêu",
                                     font=("Arial", 12, "bold"), padx=10, pady=10)
         input_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 20))
         input_frame.grid_rowconfigure(5, weight=1)
         input_frame.grid_columnconfigure(1, weight=1)
-        
+       
         # Chỉ tiêu kỹ thuật chi tiết
-        tk.Label(input_frame, text="Chỉ tiêu kỹ thuật chi tiết:", 
+        tk.Label(input_frame, text="Mã chỉ tiêu:",
                 font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 5))
-        chi_tieu_entry = tk.Text(input_frame, height=3, width=50, wrap=tk.WORD, 
+        chi_tieu_entry = tk.Text(input_frame, height=3, width=50, wrap=tk.WORD,
                                 font=("Arial", 10), relief="solid", borderwidth=1)
         chi_tieu_entry.grid(row=0, column=1, sticky="ew", pady=(0, 5), padx=(0, 10))
-        
+       
         # Yêu cầu kỹ thuật
-        tk.Label(input_frame, text="Yêu cầu kỹ thuật:", 
+        tk.Label(input_frame, text="Chỉ tiêu kỹ thuật chi tiết:",
                 font=("Arial", 11, "bold")).grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(0, 5))
-        yeu_cau_entry = tk.Text(input_frame, height=3, width=50, wrap=tk.WORD, 
+        yeu_cau_entry = tk.Text(input_frame, height=3, width=50, wrap=tk.WORD,
                             font=("Arial", 10), relief="solid", borderwidth=1)
         yeu_cau_entry.grid(row=1, column=1, sticky="ew", pady=(0, 5), padx=(0, 10))
-        
+       
         # Đạt
         tk.Label(input_frame, text="Đạt:", font=("Arial", 11, "bold")).grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(0, 5))
-        dat_entry = tk.Text(input_frame, height=4, width=50, wrap=tk.WORD, 
+        dat_entry = tk.Text(input_frame, height=4, width=50, wrap=tk.WORD,
                         font=("Arial", 10), relief="solid", borderwidth=1)
         dat_entry.grid(row=2, column=1, sticky="ew", pady=(0, 5), padx=(0, 10))
-        
+       
         # Không đạt
         tk.Label(input_frame, text="Không đạt:", font=("Arial", 11, "bold")).grid(row=3, column=0, sticky="w", padx=(0, 10), pady=(0, 5))
-        khong_dat_entry = tk.Text(input_frame, height=4, width=50, wrap=tk.WORD, 
+        khong_dat_entry = tk.Text(input_frame, height=4, width=50, wrap=tk.WORD,
                                 font=("Arial", 10), relief="solid", borderwidth=1)
         khong_dat_entry.grid(row=3, column=1, sticky="ew", pady=(0, 5), padx=(0, 10))
-        
+       
         # Loại chỉ tiêu
         tk.Label(input_frame, text="Loại chỉ tiêu:", font=("Arial", 12, "bold")).grid(row=4, column=0, sticky="w", padx=(0, 10), pady=(0, 5))
         crit_type_combo = ttk.Combobox(input_frame, values=["CTCB", "KCB"], width=47, state="readonly", font=("Arial", 12))
         crit_type_combo.set("CTCB")
         crit_type_combo.grid(row=4, column=1, sticky="ew", pady=(0, 5), padx=(0, 10))
-    
+   
         # Button frame
         button_frame = tk.Frame(main_frame)
         button_frame.grid(row=2, column=0, pady=20)
         button_frame.grid_columnconfigure(0, weight=1)
-        
+       
         def save_single_custom():
             """Lưu 1 chỉ tiêu tùy chỉnh - Tạo format đúng và validate"""
             chi_tieu = chi_tieu_entry.get("1.0", tk.END).strip()
@@ -2874,13 +2919,13 @@ class DetailProjectProduct:
             dat = dat_entry.get("1.0", tk.END).strip()
             khong_dat = khong_dat_entry.get("1.0", tk.END).strip()
             crit_type = crit_type_combo.get()
-            
+           
             # Validate bắt buộc - Yêu cầu kỹ thuật phải có
             if not yeu_cau:
-                messagebox.showerror("Lỗi", "Vui lòng điền 'Yêu cầu kỹ thuật'")
+                messagebox.showerror("Lỗi", "Vui lòng điền 'Chỉ tiêu kỹ thuật chi tiết'")
                 yeu_cau_entry.focus_set()
                 return
-            
+           
             # Validate - ít nhất một trong hai điều kiện Đạt/Không đạt
             if not dat and not khong_dat:
                 messagebox.showerror("Lỗi", "Cần ít nhất một trong hai điều kiện 'Đạt' hoặc 'Không đạt'!")
@@ -2889,16 +2934,16 @@ class DetailProjectProduct:
                 else:
                     khong_dat_entry.focus_set()
                 return
-            
+           
             # Tạo tieu_chi_raw theo format chuẩn
             parts = []
             if dat:
                 parts.append(f"- Đạt: {dat}")
             if khong_dat:
                 parts.append(f"- Không đạt: {khong_dat}")
-            
+           
             tieu_chi_raw = "\n".join(parts)
-            
+           
             # Tạo row_data để truyền vào add_single_custom_row_to_tab
             row_data = {
                 'chi_tieu': chi_tieu,
@@ -2908,26 +2953,26 @@ class DetailProjectProduct:
                 'tieu_chi_raw': tieu_chi_raw,
                 'crit_type': crit_type
             }
-            
+           
             try:
                 self.add_single_custom_row_to_tab(row_data)
                 add_win.destroy()
                 messagebox.showinfo("Thành công", f"Đã thêm chỉ tiêu tùy chỉnh '{chi_tieu[:30]}...' thành công!")
             except Exception as e:
                 messagebox.showerror("Lỗi", f"Lỗi khi thêm chỉ tiêu: {str(e)}")
-        
+       
         def cancel_add():
             """Hủy thêm chỉ tiêu"""
             add_win.destroy()
-        
+       
         # Buttons
-        tk.Button(button_frame, text="Thêm", command=save_single_custom, 
-                fg="black", font=("Arial", 12, "bold"), 
+        tk.Button(button_frame, text="Thêm", command=save_single_custom,
+                fg="black", font=("Arial", 12, "bold"),
                 width=12, height=2, relief="raised").pack(side=tk.RIGHT, padx=(0, 10))
         tk.Button(button_frame, text="Hủy", command=cancel_add,
-                fg="black", font=("Arial", 12, "bold"), 
+                fg="black", font=("Arial", 12, "bold"),
                 width=12, height=2, relief="raised").pack(side=tk.RIGHT, padx=(0, 10))
-        
+       
         # Focus vào ô đầu tiên
         chi_tieu_entry.focus_set()
         add_win.bind('<Return>', lambda e: save_single_custom())
@@ -2939,50 +2984,42 @@ class DetailProjectProduct:
             if "yeu_cau_khac" in self.ctkt_mua_sam_tree.item(child).get('tags', ()):
                 yeu_cau_khac_item = child
                 break
-        
-        # Lấy STT của "Yêu cầu khác" từ treeview
-        if yeu_cau_khac_item:
-            req_number = int(self.ctkt_mua_sam_tree.item(yeu_cau_khac_item, "values")[0])  # Lấy STT từ cột 0
-        else:
-            # Nếu chưa có "Yêu cầu khác", tạm thời gán req_number = 1 (sẽ được thêm sau)
-            req_number = 1
-        
+       
         # Tính sub_stt cho custom item
         custom_items = [item for item in self.ctkt_mua_sam_tree.get_children() if "custom_single" in self.ctkt_mua_sam_tree.item(item).get('tags', ())]
-        sub_stt = len(custom_items) + 1
-        
+       
         # Tạo custom_id mới
         custom_ids = set()
         for key in self.custom_indicators.get("ctkt_mua_sam", {}).keys():
             if key.startswith("chi_tieu_") and key.split("_")[-1].startswith("-"):
-                custom_ids.add(int(key.split("_")[-1]))
-        
-        if custom_ids:
-            next_custom_id = int(min(custom_ids)) - 1
+                custom_ids.add(key.split("_")[-1])
+       
+        valid_custom_ids = [int(cid) for cid in custom_ids if cid.lstrip('-').isdigit()]
+        if valid_custom_ids:
+            next_custom_id = min(valid_custom_ids) - 1
         else:
             next_custom_id = -1
         ind_id_str = str(next_custom_id)
-        
+       
         dat = row_data.get('dat', '').strip()
         khong_dat = row_data.get('khong_dat', '').strip()
-        
+       
         parts = []
         if dat:
             parts.append(f"- Đạt: {dat}")
         if khong_dat:
             parts.append(f"- Không đạt: {khong_dat}")
-        
+       
         tieu_chi_raw = "\n".join(parts)
         tieu_chi_display = self.format_tieu_chi_for_display(tieu_chi_raw)
-        
+       
         self.custom_indicators.setdefault("ctkt_mua_sam", {})
         self.custom_indicators["ctkt_mua_sam"][f"chi_tieu_{ind_id_str}"] = row_data['chi_tieu']
         self.custom_indicators["ctkt_mua_sam"][f"yeu_cau_{ind_id_str}"] = row_data['yeu_cau']
         self.custom_indicators["ctkt_mua_sam"][f"tieu_chi_{ind_id_str}"] = tieu_chi_raw
         self.custom_indicators["ctkt_mua_sam"][f"crit_type_{ind_id_str}"] = row_data['crit_type']
-        
+       
         values = [
-            f"{req_number}.{sub_stt}",
             wrap_text(row_data['chi_tieu'], 40),
             wrap_text(row_data['yeu_cau'], 30),
             "",
@@ -2991,48 +3028,55 @@ class DetailProjectProduct:
             row_data['crit_type'],
             "Xóa"
         ]
-        
+       
         item = self.ctkt_mua_sam_tree.insert("", "end", values=values, tags=("data_row", "custom_single"))
         self.ctkt_mua_sam_indicator_map[item] = ind_id_str
         self.custom_rows_ctkt_ms.append(item)
-        
+       
         line_count = 1
         if tieu_chi_display:
             line_count = tieu_chi_display.count('\r\n') + 1
-        
+       
         height = line_count * 60
         self.max_row_heights["ctkt_mua_sam"] = max(self.max_row_heights["ctkt_mua_sam"], height)
-        
+       
         style = ttk.Style()
         style.configure("Custom.Treeview", rowheight=self.max_row_heights["ctkt_mua_sam"])
         style.configure("DataRow.Treeview", rowheight=self.max_row_heights["ctkt_mua_sam"])
-
+        
+    # Cập nhật hàm on_click_action để xử lý xóa cho tab dmkt và ctkt_mua_sam
     def on_click_action(self, event):
+        """
+        GIẢI THÍCH: Xử lý sự kiện click vào cột "Hành động" - ĐỒNG BỘ với project_manager.py
+        - SỬA: Không cho phép xóa 2 hàng đầu tiên (tên sản phẩm, tên hãng) ở tab Hãng
+        """
         if not self.current_tree or not self.current_tab:
             return
-        
+
         item = self.current_tree.identify_row(event.y)
         if not item:
             return
-        
+
         column = self.current_tree.identify_column(event.x)
         col_idx = int(column.replace("#", "")) - 1
         columns = self.current_tree["columns"]
         if col_idx < 0 or col_idx >= len(columns):
             return
-        
+
         col_name = columns[col_idx]
         if col_name != "Hành động":
             return
-        
+
         ind_id = self.current_indicator_map.get(item)
         if not ind_id:
             return
-        
+
+        # SỬA: Không cho phép xóa 2 hàng đầu tiên (tên sản phẩm, tên hãng) ở tab Hãng
         if isinstance(ind_id, str) and (ind_id.startswith("name_") or ind_id.startswith("product_name_")):
             messagebox.showinfo("Thông báo", "Không thể xóa hàng tên sản phẩm hoặc tên hãng.\nĐể xóa toàn bộ sản phẩm tham khảo, vui lòng sử dụng chức năng xóa sản phẩm tham khảo trong menu chính.")
             return
-        
+
+        # Xử lý xóa chỉ tiêu tùy chỉnh trong tab CTKT mua sắm
         if isinstance(ind_id, str) and ind_id.startswith('-'):
             if not messagebox.askyesno("Xác nhận", "Bạn có chắc muốn xóa chỉ tiêu tùy chỉnh này?"):
                 return
@@ -3045,46 +3089,22 @@ class DetailProjectProduct:
             
             self.load_ctkt_mua_sam_tab()
             messagebox.showinfo("Thành công", "Đã xóa chỉ tiêu tùy chỉnh")
-        
+
+        # Xử lý tab dmkt
         elif self.current_tab == "dmkt":
             values = self.current_tree.item(item)['values']
             
-            if values[1].startswith("- "):
-                children_to_delete = []
-                current_req = values[1][2:]
-                
-                for child in self.current_tree.get_children():
-                    child_values = self.current_tree.item(child)['values']
-                    if child_values[1].startswith("- ") and child != item:
-                        break
-                    elif not child_values[1].startswith("- "):
-                        children_to_delete.append(child)
-                
-                children_to_delete.insert(0, item)
-                
-                if messagebox.askyesno("Xác nhận", "Bạn có chắc muốn xóa toàn bộ nhóm chỉ tiêu này?"):
-                    for child_item in children_to_delete:
-                        if child_item in self.current_tree.get_children():
-                            child_ind_id = self.current_indicator_map.get(child_item)
-                            if child_ind_id:
-                                self.origin_deleted.setdefault("dmkt", set()).add(int(child_ind_id))
-                                self.deleted_indicators.setdefault("dmkt", set()).add(int(child_ind_id))
-                                self.deleted_indicators.setdefault("ctkt_bo", set()).add(int(child_ind_id))
-                                self.current_tree.delete(child_item)
-                                if child_item in self.current_indicator_map:
-                                    del self.current_indicator_map[child_item]
-                    
-                    self.load_single_tab("ctkt_bo")
-            else:
-                if messagebox.askyesno("Xác nhận", "Bạn có chắc muốn xóa chỉ tiêu này?"):
-                    self.origin_deleted.setdefault("dmkt", set()).add(int(ind_id))
-                    self.deleted_indicators.setdefault("dmkt", set()).add(int(ind_id))
-                    self.deleted_indicators.setdefault("ctkt_bo", set()).add(int(ind_id))
-                    self.current_tree.delete(item)
-                    if item in self.current_indicator_map:
-                        del self.current_indicator_map[item]
-                    self.load_single_tab("ctkt_bo")
-        
+            # SỬA: Vì bỏ phân cấp, không còn header "- ", chỉ xóa hàng đơn lẻ
+            if messagebox.askyesno("Xác nhận", "Bạn có chắc muốn xóa chỉ tiêu này?"):
+                self.origin_deleted.setdefault("dmkt", set()).add(int(ind_id))
+                self.deleted_indicators.setdefault("dmkt", set()).add(int(ind_id))
+                self.deleted_indicators.setdefault("ctkt_bo", set()).add(int(ind_id))
+                self.current_tree.delete(item)
+                if item in self.current_indicator_map:
+                    del self.current_indicator_map[item]
+                self.load_single_tab("ctkt_bo")
+
+        # Xử lý tab ctkt_mua_sam
         elif self.current_tab == "ctkt_mua_sam":
             tags = self.current_tree.item(item)['tags']
             
@@ -3131,7 +3151,8 @@ class DetailProjectProduct:
                         self.current_tree.delete(item)
                         if item in self.current_indicator_map:
                             del self.current_indicator_map[item]
-        
+
+        # Các tab khác: three_brands, bom, ctkt_bo
         else:
             if "yeu_cau_khac" in self.current_tree.item(item)['tags']:
                 messagebox.showinfo("Thông báo", "Không thể xóa hàng Yêu cầu khác")
@@ -3151,6 +3172,40 @@ class DetailProjectProduct:
                 if messagebox.askyesno("Xác nhận", "Bạn có chắc muốn xóa chỉ tiêu này?"):
                     ind_id_int = int(ind_id)
                     
+                    # SỬA: Ép kiểu cha_code thành string để tránh TypeError khi nối chuỗi
+                    cha_code = str(self.current_tree.item(item)['values'][0]).strip()  # Lấy Mã chỉ tiêu từ cột đầu tiên
+                    
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    
+                    # Kiểm tra nếu là mục cha (có con trực tiếp)
+                    has_con = c.execute(
+                        "SELECT EXISTS(SELECT 1 FROM indicators WHERE indicator_code LIKE ? AND type_id = (SELECT type_id FROM indicators WHERE id = ?))",
+                        (cha_code + '.%', ind_id_int)
+                    ).fetchone()[0]
+                    
+                    # Danh sách id cần xóa: bắt đầu bằng id của mục đang xóa
+                    ind_ids_to_delete = [ind_id_int]
+                    
+                    # Nếu là cha, thêm tất cả id con trực tiếp vào danh sách xóa
+                    if has_con:
+                        con_rows = c.execute(
+                            "SELECT id FROM indicators WHERE indicator_code LIKE ? AND type_id = (SELECT type_id FROM indicators WHERE id = ?)",
+                            (cha_code + '.%', ind_id_int)
+                        ).fetchall()
+                        ind_ids_to_delete += [row[0] for row in con_rows]
+                    
+                    conn.close()
+                    
+                    # Tìm tất cả item trong treeview cần xóa (dựa trên id)
+                    items_to_delete = []
+                    for tree_item in self.current_tree.get_children():
+                        tree_ind_id = self.current_indicator_map.get(tree_item)
+                        # SỬA MỚI: Chỉ int() nếu tree_ind_id là số (kiểm tra lstrip('-').isdigit() để hỗ trợ id âm nếu có)
+                        if tree_ind_id and str(tree_ind_id).lstrip('-').isdigit() and int(tree_ind_id) in ind_ids_to_delete:
+                            items_to_delete.append(tree_item)
+                    
+                    # Cascade map cho các tab phụ thuộc
                     cascade_map = {
                         "three_brands": ["bom", "dmkt", "ctkt_bo", "ctkt_mua_sam"],
                         "bom": ["dmkt", "ctkt_bo"],
@@ -3159,36 +3214,57 @@ class DetailProjectProduct:
                         "ctkt_bo": []
                     }
                     
-                    self.origin_deleted.setdefault(self.current_tab, set()).add(ind_id_int)
-                    self.deleted_indicators.setdefault(self.current_tab, set()).add(ind_id_int)
+                    # Thêm tất cả id vào origin_deleted và deleted_indicators của tab hiện tại
+                    for del_id in ind_ids_to_delete:
+                        self.origin_deleted.setdefault(self.current_tab, set()).add(del_id)
+                        self.deleted_indicators.setdefault(self.current_tab, set()).add(del_id)
                     
+                    # Cascade cho tab phụ thuộc
                     dependent_tabs = cascade_map.get(self.current_tab, [])
                     for dep_tab in dependent_tabs:
-                        self.deleted_indicators.setdefault(dep_tab, set()).add(ind_id_int)
+                        for del_id in ind_ids_to_delete:
+                            self.deleted_indicators.setdefault(dep_tab, set()).add(del_id)
                     
+                    # Xóa tất cả item tìm được từ treeview
+                    for del_item in items_to_delete:
+                        if del_item in self.current_tree.get_children():
+                            self.current_tree.delete(del_item)
+                            if del_item in self.current_indicator_map:
+                                del self.current_indicator_map[del_item]
+                    
+                    # Reload tab hiện tại và các tab phụ thuộc
                     self.load_single_tab(self.current_tab)
                     for dep_tab in dependent_tabs:
                         self.load_single_tab(dep_tab)
                     
-                    if item in self.current_tree.get_children():
-                        self.current_tree.delete(item)
-                    if item in self.current_indicator_map:
-                        del self.current_indicator_map[item]
-                    
                     messagebox.showinfo("Thành công", f"Đã xóa chỉ tiêu khỏi tab '{self.current_tab}' và {len(dependent_tabs)} tab phụ thuộc")
-
+    
     def check_and_mark_row(self, tree, item, ind_id, so_sanh, tieu_chi, tab_name):
+        """
+        GIẢI THÍCH: Kiểm tra điều kiện và đánh dấu row
+        - Bôi xanh nếu giá trị rỗng (chỉ cho tab CTKT mua sắm khi có tiêu chí)
+        - Không kiểm tra so sánh với sản phẩm tham khảo nữa
+        """
+        tags = tree.item(item)['tags']
+        # SỬA MỚI: Nếu là parent thì không bôi xanh
+        if "parent" in tags:
+            tree.item(item, tags=("data_row",) + tuple(t for t in tags if t != "blue"))
+            return
+      
         if not so_sanh or not str(so_sanh).strip():
+            # GIẢI THÍCH: Nếu giá trị rỗng, bôi xanh
             tree.item(item, tags=("data_row", "blue"))
             return
-        
+      
+        # GIẢI THÍCH: Đối với tab CTKT mua sắm, kiểm tra cả tiêu chí
         if tab_name == "ctkt_mua_sam":
             if not tieu_chi or not str(tieu_chi).strip():
                 tree.item(item, tags=("data_row", "blue"))
             else:
                 tree.item(item, tags=("data_row",))
             return
-        
+      
+        # GIẢI THÍCH: Các tab khác không bôi đỏ
         tree.item(item, tags=("data_row",))
 
     def calculate_extreme_value(self, ind_id, tree, reference_columns, danh_gia):
@@ -3198,13 +3274,13 @@ class DetailProjectProduct:
         """
         if not reference_columns or str(ind_id).startswith('-'):
             return ""
-        
+       
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         values = []
-        
+       
         for man_id in reference_columns.values():
-            value = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?", 
+            value = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?",
                             (man_id, ind_id)).fetchone()
             if value and value[0]:
                 try:
@@ -3212,57 +3288,20 @@ class DetailProjectProduct:
                     values.append(num_value)
                 except ValueError:
                     conn.close()
-                    return ""  # Nếu có non-numeric, trả rỗng
-        
+                    return "" # Nếu có non-numeric, trả rỗng
+       
         conn.close()
-        
+       
         if not values:
             return ""
-        
+       
         if danh_gia in ["<=", "=", "<"]:
             return str(max(values))
         elif danh_gia in [">=", ">"]:
             return str(min(values))
-        else:  # "not"
+        else: # "not"
             return ""
         
-    def get_min_max_from_references(self, ind_id):
-        """
-        GIẢI THÍCH: Tính giá trị min và max từ các sản phẩm tham khảo cho một indicator cụ thể
-        - Duyệt qua tất cả reference products trong self.reference_columns
-        - Lấy specification_value từ bảng product_specifications
-        - Chỉ lấy các giá trị số hợp lệ (bỏ qua rỗng và non-numeric)
-        - Trả về (min, max) hoặc (None, None) nếu không có giá trị hợp lệ
-        """
-        if not self.reference_columns or str(ind_id).startswith('-'):
-            return None, None
-        
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        numeric_values = []
-        
-        try:
-            for man_id in self.reference_columns.values():
-                value = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?", 
-                                (man_id, ind_id)).fetchone()
-                if value and value[0]:
-                    try:
-                        num_value = float(value[0].strip())
-                        numeric_values.append(num_value)
-                    except ValueError:
-                        continue  # Bỏ qua giá trị không phải số
-            conn.close()
-            
-            if numeric_values:
-                return min(numeric_values), max(numeric_values)
-            else:
-                return None, None
-                
-        except Exception as e:
-            conn.close()
-            print(f"Lỗi khi tính min/max: {str(e)}")
-            return None, None
-
     def get_prev_tab_value(self, ind_id, current_tab):
         """
         GIẢI THÍCH: Lấy giá trị từ tab trước đó để kiểm tra ràng buộc
@@ -3277,618 +3316,40 @@ class DetailProjectProduct:
         if prev_tab:
             return self.custom_indicators.get(prev_tab, {}).get(f"so_sanh_{ind_id}", "")
         return None
-
-    def should_mark_blue_for_export(self, ind_id, current_value, tab_name, is_header=False):
-        if tab_name == "dmkt" and is_header:
-            if current_value:  # Nếu header có current_value (single no sub), kiểm tra rỗng
-                return not str(current_value).strip()
-            else:  # Header không có value (có sub), không tô blue
-                return False
-        if not ind_id:
-            return False
-        return not str(current_value).strip()
-    
-    def load_and_export(self, template_path, output_path, product_name, reference_products, tree_children, tree, tab_name):
+   
+    def get_min_max_from_references(self, ind_id):
         """
-        GIẢI THÍCH: Export Excel cho tab 3 hãng và BOM
-        - SỬA: Sửa filtered_children để lọc đúng 2 hàng đầu tiên cho tab BOM: dùng ["name_bom", "product_name_bom"] thay vì ["name", "product_name"], để không lấy 2 hàng tên sản phẩm và tên hãng vào khi export tab BOM, tương tự tab Hãng.
-        - Các sửa khác giữ nguyên.
+        GIẢI THÍCH: Tính giá trị min và max từ các sản phẩm tham khảo cho một indicator cụ thể
+        - Duyệt qua tất cả reference products trong self.reference_columns
+        - Lấy specification_value từ bảng product_specifications
+        - Chỉ lấy các giá trị số hợp lệ (bỏ qua rỗng và non-numeric)
+        - Trả về (min, max) hoặc (None, None) nếu không có giá trị hợp lệ
         """
-        if not os.path.exists(template_path):
-            messagebox.showerror("Lỗi", f"Không tìm thấy file mẫu: {template_path}")
-            return
-        
-        wb = openpyxl.load_workbook(template_path)
-        ws = wb.active
-        
-        num_products = len(reference_products)
-        
-        # Xử lý merge cells
-        merged_to_unmerge = None
-        for cr in list(ws.merged_cells.ranges):
-            if cr.min_row == 1 and cr.min_col == 5:
-                merged_to_unmerge = str(cr)
-                break
-        if merged_to_unmerge:
-            ws.unmerge_cells(merged_to_unmerge)
-        
-        if num_products > 0:
-            start_col = 'E'
-            # SỬA: Merge header cho "Sản phẩm đáp ứng" đến hết cột tham chiếu (mỗi sản phẩm + tham chiếu)
-            end_col = get_column_letter(4 + num_products * 2)  # Vì mỗi sản phẩm có 1 cột chính + 1 cột tham chiếu
-            ws.merge_cells(f'{start_col}1:{end_col}1')
-            ws['E1'].value = "Sản phẩm đáp ứng"
-            ws['E1'].alignment = Alignment(horizontal='center', vertical='center')
-            ws['E1'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-        
-        # Tạo cột cho từng sản phẩm tham khảo
-        if num_products > 1:
-            for i in range(1, num_products):
-                new_col_num = 5 + i * 2  # Mỗi sản phẩm chiếm 2 cột
-                for row in range(2, 7):
-                    source_cell = ws.cell(row=row, column=5)
-                    target_cell = ws.cell(row=row, column=new_col_num)
-                    target_cell.value = source_cell.value
-                    if source_cell.has_style:
-                        target_cell.font = source_cell.font.copy()
-                        target_cell.border = source_cell.border.copy()
-                        target_cell.fill = source_cell.fill.copy()
-                        target_cell.number_format = source_cell.number_format
-                        target_cell.alignment = source_cell.alignment.copy()
-                    target_cell.font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)  # SỬA: Bôi đậm
-                
-                # SỬA: Sao chép cột Tham chiếu
-                ref_source_col = 6  # Cột tham chiếu đầu tiên
-                new_ref_col_num = new_col_num + 1
-                for row in range(2, 7):
-                    source_cell = ws.cell(row=row, column=ref_source_col)
-                    target_cell = ws.cell(row=row, column=new_ref_col_num)
-                    target_cell.value = source_cell.value
-                    if source_cell.has_style:
-                        target_cell.font = source_cell.font.copy()
-                        target_cell.border = source_cell.border.copy()
-                        target_cell.fill = source_cell.fill.copy()
-                        target_cell.number_format = source_cell.number_format
-                        target_cell.alignment = source_cell.alignment.copy()
-                    target_cell.font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)  # SỬA: Bôi đậm
-        
-        # SỬA: Điền thông tin header - Thay "Loại sản phẩm" thành "Sản phẩm" và bôi đậm
-        ws['B4'] = product_name
-        ws['B4'].alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
-        ws['B4'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-        
-        ws['B5'] = "Tên hãng"
-        ws['B5'].alignment = Alignment(horizontal='left', vertical='top')
-        ws['B5'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-        
-        # SỬA: Điền thông tin sản phẩm tham khảo + thêm cột Tham chiếu
-        if num_products > 0:
-            for i, (man_id, prod_name, prod_display) in enumerate(reference_products):
-                col_num = 5 + i * 2  # Cột chính cho sản phẩm
-                col_letter = get_column_letter(col_num)
-                ref_col_num = col_num + 1
-                ref_col_letter = get_column_letter(ref_col_num)
-                
-                # SỬA THÊM: Merge hàng 2 giữa cột chính và tham chiếu, đặt "Tham khảo {i+1}"
-                ws.merge_cells(f'{col_letter}2:{ref_col_letter}2')
-                ws[f'{col_letter}2'] = f"Tham khảo {i+1}"
-                ws[f'{col_letter}2'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-                ws[f'{col_letter}2'].alignment = Alignment(horizontal='center', vertical='center')
-                
-                # Hàng 3: "Chỉ tiêu kỹ thuật" ở cột chính, "Tham chiếu" ở cột tham chiếu
-                ws[f'{col_letter}3'] = "Chỉ tiêu kỹ thuật"
-                ws[f'{col_letter}3'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-                
-                ws[f'{ref_col_letter}3'] = "Tham chiếu"
-                ws[f'{ref_col_letter}3'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-                # SỬA THÊM: Màu giống "Chỉ tiêu kỹ thuật" (default không fill, nên giữ nguyên)
-                
-                # Hàng 4: prod_display ở cột chính
-                ws[f'{col_letter}4'] = prod_display
-                ws[f'{col_letter}4'].alignment = Alignment(horizontal='center', vertical='center')
-                ws[f'{col_letter}4'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-                
-                # Hàng 5: prod_name ở cột chính
-                ws[f'{col_letter}5'] = prod_name
-                ws[f'{col_letter}5'].alignment = Alignment(horizontal='center', vertical='center')
-                ws[f'{col_letter}5'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-                
-                # SỬA: Merge chỉ hàng 4-5 cho tham chiếu, điền ref_value
-                ws.merge_cells(f'{ref_col_letter}4:{ref_col_letter}5')
-                ref_key = f"ref_value_{man_id}_product_name"
-                ref_value = self.custom_indicators.get(tab_name, {}).get(ref_key, "")  # SỬA: Sử dụng tab_name thay vì hardcode "three_brands"
-                ws[f'{ref_col_letter}4'] = ref_value  # Gán vào vào ô chính của merge
-                ws[f'{ref_col_letter}4'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                ws[f'{ref_col_letter}4'].font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # SỬA THÊM: Không merge hàng 6 cho tham chiếu (đã không merge), để trống hoặc giữ default
-        
-        ws['B6'] = "Chỉ tiêu kỹ thuật chi tiết"
-        ws['B6'].alignment = Alignment(horizontal='left', vertical='top')
-        ws['B6'].font = openpyxl.styles.Font(name="Times New Roman", size=12, bold=True)
-        
-        if num_products > 1:
-            for i in range(1, num_products):
-                new_col_num = 5 + i * 2  # SỬA: Mỗi sản phẩm chiếm 2 cột
-                for row in range(7, ws.max_row + 1):
-                    source_cell = ws.cell(row=row, column=5)
-                    target_cell = ws.cell(row=row, column=new_col_num)
-                    target_cell.value = source_cell.value
-                    if source_cell.has_style:
-                        target_cell.font = source_cell.font.copy()
-                        target_cell.border = source_cell.border.copy()
-                        target_cell.fill = source_cell.fill.copy()
-                        target_cell.number_format = source_cell.number_format
-                        target_cell.alignment = source_cell.alignment.copy()
-                    target_cell.font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # SỬA: Sao chép cột Tham chiếu
-                ref_source_col = 6  # Cột tham chiếu đầu tiên
-                new_ref_col_num = new_col_num + 1
-                for row in range(7, ws.max_row + 1):
-                    source_cell = ws.cell(row=row, column=ref_source_col)
-                    target_cell = ws.cell(row=row, column=new_ref_col_num)
-                    target_cell.value = source_cell.value
-                    if source_cell.has_style:
-                        target_cell.font = source_cell.font.copy()
-                        target_cell.border = source_cell.border.copy()
-                        target_cell.fill = source_cell.fill.copy()
-                        target_cell.number_format = source_cell.number_format
-                        target_cell.alignment = source_cell.alignment.copy()
-                    target_cell.font = openpyxl.styles.Font(name="Times New Roman", size=12)
-        
-        # SỬA: Điền dữ liệu từ tree - BỎ 2 HÀNG ĐẦU TIÊN
-        data_start_row = 7
-        indicator_map = getattr(self, f"{tab_name}_indicator_map")
-        
-        # SỬA: Lọc bỏ 2 hàng đầu tiên (tên sản phẩm tham khảo và tên hãng)
-        filter_ids = ["name", "product_name"] if tab_name == "three_brands" else ["name_bom", "product_name_bom"]
-        filtered_children = []
-        for child in tree_children:
-            ind_id = indicator_map.get(child)
-            if ind_id not in filter_ids:
-                filtered_children.append(child)
-        
-        for idx, child in enumerate(filtered_children):
-            row = data_start_row + idx
-            values = tree.item(child)['values']
-            ind_id = indicator_map.get(child, None)
-            
-            if tab_name in ["three_brands", "bom"]:
-                # Cột A: STT
-                ws.cell(row=row, column=1, value=idx+1)  # Sửa STT bắt đầu từ 1
-                ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=1).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Cột B: Yêu cầu kỹ thuật
-                ws.cell(row=row, column=2, value=str(values[1]).replace('\n', ' '))
-                ws.cell(row=row, column=2).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=2).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Cột C: Chỉ tiêu kỹ thuật chi tiết (gộp Chỉ tiêu + Đánh giá + Giá trị + Đơn vị, bỏ Đánh giá nếu là "not")
-                chi_tieu = str(values[2]).replace('\n', ' ').strip()
-                danh_gia = self.custom_indicators.get(tab_name, {}).get(f"danh_gia_{ind_id}", "not")  # SỬA: Sử dụng tab_name thay vì hardcode "three_brands"
-                compare_symbols = {
-                    "<=": "≤",
-                    ">=": "≥",
-                    "=": "=",
-                    "<": "<",
-                    ">": ">"
-                }
-                compare_symbol = compare_symbols.get(danh_gia, "") if danh_gia != "not" else ""
-                gia_tri_idx = 4 if tab_name == "three_brands" else 3
-                gia_tri = str(values[gia_tri_idx]).replace('\n', ' ').strip()
-                don_vi_idx = 6 if tab_name == "three_brands" else 4
-                don_vi = str(values[don_vi_idx]).replace('\n', ' ').strip()
-
-                # Gộp chuỗi, chỉ thêm các thành phần có giá trị, tránh lặp đánh giá bằng cách chỉ thêm symbol nếu != "not"
-                chi_tieu_parts = [chi_tieu]
-                if compare_symbol and gia_tri:  # SỬA: Chỉ thêm symbol nếu có giá trị để tránh lặp (symbol xuất hiện 2 lần nếu không kiểm tra gia_tri)
-                    chi_tieu_parts.append(compare_symbol)
-                if gia_tri:
-                    chi_tieu_parts.append(gia_tri)
-                if don_vi:
-                    chi_tieu_parts.append(don_vi)
-
-                chi_tieu_gop = " ".join(chi_tieu_parts).strip()
-                ws.cell(row=row, column=3, value=chi_tieu_gop)
-                ws.cell(row=row, column=3).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=3).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Cột D: Loại chỉ tiêu
-                loai_chi_tieu_idx = 7 if tab_name == "three_brands" else 5
-                ws.cell(row=row, column=4, value=str(values[loai_chi_tieu_idx]).replace('\n', ' '))
-                ws.cell(row=row, column=4).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=4).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # SỬA: Cột E trở đi: Giá trị sản phẩm tham khảo + Tham chiếu (mỗi sản phẩm 2 cột)
-                ref_col_offset = 0
-                start_ref_idx = 8 if tab_name == "three_brands" else 6  # Bắt đầu từ sau Loại chỉ tiêu
-                for i, val in enumerate(values[start_ref_idx:-1]):  # -1 để bỏ cột "Hành động"
-                    col_num = 5 + ref_col_offset
-                    ws.cell(row=row, column=col_num, value=str(val).replace('\n', ' '))
-                    ws.cell(row=row, column=col_num).alignment = Alignment(wrap_text=True, vertical='top')
-                    ws.cell(row=row, column=col_num).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                    ref_col_offset += 1
-                
-                # Kiểm tra bôi đỏ (chỉ khi giá trị rỗng)
-                if "header" not in tree.item(child)['tags']:
-                    is_blue = self.should_mark_blue_for_export(ind_id, gia_tri, tab_name)
-                    if is_blue:
-                        for col in range(1, 5 + num_products * 2):  # SỬA: Cột tăng gấp đôi vì có tham chiếu
-                            ws.cell(row=row, column=col).fill = self.blue_fill
-                
-                # Tính chiều cao row
-                max_lines = max([str(values[i]).count('\n') + 1 for i in range(len(values)) if isinstance(values[i], str)])
-                ws.row_dimensions[row].height = 15 * max_lines
-            
-            elif tab_name == "ctkt_bo":
-                # Cột A: TT
-                ws.cell(row=row, column=1, value=str(values[0]))
-                ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=1).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Cột B: Chỉ tiêu
-                ws.cell(row=row, column=2, value=str(values[1]).replace('\n', ' '))
-                ws.cell(row=row, column=2).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=2).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Cột C: Đơn vị
-                ws.cell(row=row, column=3, value=str(values[2]).replace('\n', ' '))
-                ws.cell(row=row, column=3).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=3).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Cột D: Giá trị
-                gia_tri = str(values[3]).replace('\n', ' ')
-                ws.cell(row=row, column=4, value=gia_tri)
-                ws.cell(row=row, column=4).alignment = Alignment(wrap_text=True, vertical='top')
-                ws.cell(row=row, column=4).font = openpyxl.styles.Font(name="Times New Roman", size=12)
-                
-                # Kiểm tra bôi đỏ
-                if "header" not in tree.item(child)['tags']:
-                    is_blue = self.should_mark_blue_for_export(ind_id, gia_tri, tab_name)
-                    if is_blue:
-                        for col in range(1, 5):
-                            ws.cell(row=row, column=col).fill = self.blue_fill
-                
-                # Tính chiều cao row
-                max_lines = max([str(val).count('\n') + 1 for val in values[:4] if isinstance(val, str)])
-                ws.row_dimensions[row].height = 15 * max_lines
-        
-        # SỬA THÊM: Áp dụng full border (thin_border) cho tất cả các ô từ 1 đến data_end
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
-                             top=Side(style='thin'), bottom=Side(style='thin'))
-        max_data_row = data_start_row + len(filtered_children) - 1 if filtered_children else 6
-        max_col = 4 + num_products * 2
-        for r in range(1, max_data_row + 1):
-            for c in range(1, max_col + 1):
-                ws.cell(row=r, column=c).border = thin_border
-        
-        # SỬA THÊM: Merge cột Yêu cầu kỹ thuật (cột B) cho các nhóm hàng liên tiếp có giá trị giống nhau
-        if filtered_children:  # Chỉ merge nếu có data
-            current_row = data_start_row
-            while current_row <= max_data_row:
-                start_merge = current_row
-                current_value = ws[f'B{current_row}'].value
-                current_row += 1
-                while current_row <= max_data_row and ws[f'B{current_row}'].value == current_value:
-                    current_row += 1
-                if current_row - start_merge > 1:
-                    ws.merge_cells(f'B{start_merge}:B{current_row-1}')
-                    ws[f'B{start_merge}'].alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
-        
-        wb.save(output_path)
-
-    def export_files(self):
-        """
-        SỬA: Hàm export files chính
-        - Thay "Loại sản phẩm" thành "Sản phẩm"
-        - Bỏ 2 hàng đầu tiên khi export tab Hãng và BOM
-        - Thêm dấu "-" trước yêu cầu kỹ thuật trong tab DMKT
-        - Sửa lỗi xuất cột "Chỉ tiêu kỹ thuật chi tiết" trong tab CTKT mua sắm
-        - Sửa lỗi UnboundLocalError cho biến so_sanh trong tab DMKT
-        """
-        # Hộp thoại chọn thư mục lưu file
-        folder = filedialog.askdirectory(title="Chọn thư mục lưu files")
-        if not folder:
-            return
-
-        # SỬA: Lấy tên sản phẩm thay vì loại sản phẩm
-        product_name = self.product_name_entry.get().strip()
-        if not product_name:
-            messagebox.showerror("Lỗi", "Vui lòng nhập tên sản phẩm trước khi xuất file")
-            return
-
-        # Lấy tên dự án từ Entry để thêm vào tên file
-        project_name = self.project_name_entry.get().strip()
-        if not project_name:
-            messagebox.showerror("Lỗi", "Vui lòng nhập tên dự án trước khi xuất file")
-            return
-
-        # Xử lý tên dự án an toàn cho tên file
-        safe_project_name = re.sub(r'[<>:"/\\|?*]', '', project_name)
-        safe_project_name = safe_project_name.strip()
-        safe_project_name = safe_project_name[:50] + "_"
-
-        print(f"DEBUG EXPORT: Tên dự án: '{project_name}' -> Tên an toàn: '{safe_project_name}'")
-
-        # Đường dẫn file mẫu
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        template_path = os.path.join(script_dir, "mau.xlsx")
-
-        # ==============================
-        # 1. Export 3 hãng
-        # ==============================
-        output_3hang_path = os.path.join(folder, f"{safe_project_name}_3 hãng.xlsx")
-        self.load_and_export(
-            template_path, output_3hang_path, product_name,
-            self.reference_products,
-            self.three_brands_tree.get_children(),
-            self.three_brands_tree, "three_brands"
-        )
-
-        # ==============================
-        # 2. Export BOM
-        # ==============================
-        output_bom_path = os.path.join(folder, f"{safe_project_name}_BOM.xlsx")
-        self.load_and_export(
-            template_path, output_bom_path, product_name,
-            self.reference_products,
-            self.bom_tree.get_children(),
-            self.bom_tree, "bom"
-        )
-
-        # ==============================
-        # 3. Export DMKT
-        # ==============================
-        wb_dmkt = openpyxl.Workbook()
-        ws_dmkt = wb_dmkt.active
-        ws_dmkt.title = "Sheet2"
-
-        # Header
-        ws_dmkt['A1'] = "TT"
-        ws_dmkt['B1'] = "Yêu cầu kỹ thuật"
-        for col in ['A1', 'B1']:
-            ws_dmkt[col].font = Font(name="Times New Roman", size=12, bold=True)
-            ws_dmkt[col].alignment = Alignment(wrap_text=True, vertical='center')
-
-        row = 2
-        max_row = 2 + len(self.dmkt_tree.get_children())
-        req_number = 0  # SỬA: Khởi tạo =0 để tăng khi gặp header
-        sub_stt = 1
-
-        for child in self.dmkt_tree.get_children():
-            values = self.dmkt_tree.item(child)['values']
-            ind_id = self.dmkt_indicator_map.get(child, None)
-            tags = self.dmkt_tree.item(child)['tags']  # Lấy tags để kiểm tra header
-
-            if values[1].startswith("- "):  # Header
-                req_number += 1  # Tăng req_number trước khi gán
-                ws_dmkt['A' + str(row)] = req_number
-                ws_dmkt['B' + str(row)] = values[1]
-                sub_stt = 1  # Reset sub
-                # SỬA: Kiểm tra bôi xanh cho header
-                so_sanh = str(values[2]).replace('\n', ' ') if len(values) > 2 else ""
-                is_blue = self.should_mark_blue_for_export(ind_id, so_sanh, "dmkt", is_header="header" in tags)
-                if is_blue:
-                    ws_dmkt['A' + str(row)].fill = self.blue_fill
-                    ws_dmkt['B' + str(row)].fill = self.blue_fill
-            else:  # Sub
-                ws_dmkt['A' + str(row)] = f"{req_number}.{sub_stt}"
-                so_sanh = str(values[2]).replace('\n', ' ') if len(values) > 2 else ""
-                don_vi = str(values[3]).replace('\n', ' ') if len(values) > 3 else ""
-                danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not")
-                compare_symbols = {
-                    "<=": "≤",
-                    ">=": "≥",
-                    "=": "=",
-                    "<": "<",
-                    ">": ">"
-                }
-                compare_symbol = compare_symbols.get(danh_gia, "")  # Không thêm nếu "not"
-
-                is_numeric = self.is_numeric_value(so_sanh)
-                if is_numeric and compare_symbol:
-                    yeu_cau_gop = f"+ {values[1][2:]} {compare_symbol} {so_sanh} {don_vi}".strip()
-                else:
-                    yeu_cau_gop = f"+ {values[1][2:]} {so_sanh} {don_vi}".strip()
-                ws_dmkt['B' + str(row)] = yeu_cau_gop
-
-                is_blue = self.should_mark_blue_for_export(ind_id, so_sanh, "dmkt", is_header=False)
-                if is_blue:
-                    ws_dmkt['A' + str(row)].fill = self.blue_fill
-                    ws_dmkt['B' + str(row)].fill = self.blue_fill
-
-                sub_stt += 1  # Tăng sub_stt sau sub
-
-            for col in ['A', 'B']:
-                cell = ws_dmkt[f"{col}{row}"]
-                cell.font = Font(name="Times New Roman", size=12)
-                cell.alignment = Alignment(wrap_text=True, vertical='top')
-
-            lines = ws_dmkt['B' + str(row)].value.count('\n') + 1 if ws_dmkt['B' + str(row)].value else 1
-            ws_dmkt.row_dimensions[row].height = 15 * lines
-            row += 1
-
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
-                            top=Side(style='thin'), bottom=Side(style='thin'))
-        for row in ws_dmkt.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=2):
-            for cell in row:
-                cell.border = thin_border
-
-        ws_dmkt.column_dimensions['A'].width = 8
-        ws_dmkt.column_dimensions['B'].width = 50
-
-        wb_dmkt.save(os.path.join(folder, f"{safe_project_name}_DMKT.xlsx"))
-
-        # ==============================
-        # 4. Export CTKT bộ
-        # ==============================
-        wb_ctkt_bo = openpyxl.Workbook()
-        ws_ctkt_bo = wb_ctkt_bo.active
-        ws_ctkt_bo.title = "Sheet1"
-
-        ws_ctkt_bo['A1'] = "TT"
-        ws_ctkt_bo['B1'] = "Chỉ tiêu"
-        ws_ctkt_bo['C1'] = "Đơn vị"
-        ws_ctkt_bo['D1'] = "Giá trị"
-
-        for col in ['A1', 'B1', 'C1', 'D1']:
-            ws_ctkt_bo[col].font = Font(name="Times New Roman", size=12, bold=True)
-            ws_ctkt_bo[col].alignment = Alignment(wrap_text=True, vertical="center")
-
-        ws_ctkt_bo['B2'] = product_name
-        ws_ctkt_bo['B2'].font = Font(name="Times New Roman", size=12)
-
-        row = 3
-        max_row = 3 + len(self.ctkt_bo_tree.get_children())
-
-        for child in self.ctkt_bo_tree.get_children():
-            values = self.ctkt_bo_tree.item(child)['values']
-            tags = self.ctkt_bo_tree.item(child)['tags']
-            ind_id = self.ctkt_bo_indicator_map.get(child, None)
-
-            max_lines = 1
-            # Ghi STT trực tiếp từ values[0] của treeview (đồng bộ với giao diện)
-            ws_ctkt_bo[f'A{row}'] = str(values[0]) if values else ""
-
-            # Ghi các giá trị còn lại: Chỉ tiêu, Đơn vị, Giá trị
-            for i, val in enumerate(values[1:4], start=1):  # Bắt đầu từ cột B (i+1=2)
-                cell = ws_ctkt_bo.cell(row=row, column=i + 1)
-                cell_value = str(val) if not isinstance(val, str) else val
-                cell.value = cell_value
-                cell.font = Font(name="Times New Roman", size=12)
-                cell.alignment = Alignment(wrap_text=True, vertical='top')
-                lines = cell_value.count('\n') + 1
-                max_lines = max(max_lines, lines)
-
-            # Áp dụng màu xanh nếu cần (cho sub-items)
-            if "header" not in tags:
-                gia_tri = str(values[3]).replace('\n', ' ') if len(values) > 3 else ""
-                is_blue = self.should_mark_blue_for_export(ind_id, gia_tri, "ctkt_bo")
-                if is_blue:
-                    for col in range(1, 5):
-                        ws_ctkt_bo.cell(row=row, column=col).fill = self.blue_fill
-
-            ws_ctkt_bo.row_dimensions[row].height = 15 * max_lines
-            row += 1
-
-        for row in ws_ctkt_bo.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=4):
-            for cell in row:
-                cell.border = thin_border
-
-        ws_ctkt_bo.column_dimensions['A'].width = 8
-        ws_ctkt_bo.column_dimensions['B'].width = 30
-        ws_ctkt_bo.column_dimensions['C'].width = 15
-        ws_ctkt_bo.column_dimensions['D'].width = 20
-
-        wb_ctkt_bo.save(os.path.join(folder, f"{safe_project_name}_Ctkt bộ.xlsx"))
-
-        # ==============================
-        # 5. Export CTKT mua sắm
-        # ==============================
-        wb_ctkt_ms = openpyxl.Workbook()
-        ws_ctkt_ms = wb_ctkt_ms.active
-        ws_ctkt_ms.title = "CTKT mua sắm"
-
-        # Định nghĩa header
-        headers = ["STT", "Tên hàng hóa\n/chỉ tiêu", "Yêu cầu kỹ thuật", "Tiêu chí đánh giá", "Loại chỉ tiêu\n(CTCB/\nKCB)"]
-        for col, header in zip(['A1', 'B1', 'C1', 'D1', 'E1'], headers):
-            ws_ctkt_ms[col] = header
-            ws_ctkt_ms[col].font = Font(name="Times New Roman", size=12, bold=True)
-            ws_ctkt_ms[col].alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
-
-        # Ghi tiêu đề sản phẩm
-        ws_ctkt_ms['A2'] = "I"
-        ws_ctkt_ms['B2'] = product_name
-        ws_ctkt_ms['A2'].font = Font(name="Times New Roman", size=12)
-        ws_ctkt_ms['B2'].font = Font(name="Times New Roman", size=12, bold=True, color="FF0000")
-        ws_ctkt_ms['B2'].alignment = Alignment(wrap_text=True, vertical="center")
-
-        # Ghi tiêu đề "Chỉ tiêu kỹ thuật chi tiết"
-        ws_ctkt_ms['B3'] = "Chỉ tiêu kỹ thuật chi tiết"
-        ws_ctkt_ms['B3'].font = Font(name="Times New Roman", size=12, bold=True)
-        ws_ctkt_ms['B3'].alignment = Alignment(wrap_text=True, vertical="center")
-
-        # Bắt đầu ghi dữ liệu từ hàng 4
-        row = 4
-        max_row = 4 + len(self.ctkt_mua_sam_tree.get_children())
-        disable_blue_fill = False  # Flag to disable blue fill after "yeu_cau_khac"
-
-        for child in self.ctkt_mua_sam_tree.get_children():
-            values = self.ctkt_mua_sam_tree.item(child)['values']
-            tags = self.ctkt_mua_sam_tree.item(child).get('tags', ())
-
-            # Check if "yeu_cau_khac" is encountered
-            if "yeu_cau_khac" in tags:
-                disable_blue_fill = True
-
-            # Lấy dữ liệu từ giao diện, xử lý rỗng và chuẩn hóa
-            stt_value = str(values[0]).strip() if values and len(values) > 0 else ""
-            chi_tieu_display = str(values[1]).replace('\n', ' ').strip() if len(values) > 1 else ""
-            yeu_cau_display = str(values[2]).replace('\n', ' ').strip() if len(values) > 2 else ""
-            gia_tri = str(values[3]).replace('\n', ' ').strip() if len(values) > 3 else ""
-            don_vi = str(values[4]).replace('\n', ' ').strip() if len(values) > 4 else ""
-            tieu_chi = str(values[5]).replace('\n', ' ').strip() if len(values) > 5 else ""
-            loai_chi_tieu = str(values[6]).replace('\n', ' ').strip() if len(values) > 6 else ""
-
-            # SỬA: Sửa logic so sánh cho CTKT mua sắm theo danh_gia từ tab hãng
-            ind_id = self.ctkt_mua_sam_indicator_map.get(child, None)
-            danh_gia = self.custom_indicators.get("three_brands", {}).get(f"danh_gia_{ind_id}", "not") if ind_id else "not"
-            compare_symbols = {
-                "<=": "≤",
-                ">=": "≥",
-                "=": "=",
-                "<": "<",
-                ">": ">"
-            }
-            compare_symbol = compare_symbols.get(danh_gia, "")  # Không thêm nếu "not"
-
-            # Xử lý "Yêu cầu kỹ thuật" dựa trên giá trị số
-            is_numeric = re.match(r'^-?\d+(\.\d+)?$', gia_tri.strip())
-            if is_numeric and yeu_cau_display and compare_symbol:
-                yeu_cau_export = f"{yeu_cau_display} {compare_symbol} {gia_tri} {don_vi}".strip()
+        if not self.reference_columns or str(ind_id).startswith('-'):
+            return None, None
+       
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        numeric_values = []
+       
+        try:
+            for man_id in self.reference_columns.values():
+                value = c.execute("SELECT specification_value FROM product_specifications WHERE manufacturer_id=? AND indicator_id=?",
+                                (man_id, ind_id)).fetchone()
+                if value and value[0]:
+                    try:
+                        num_value = float(value[0].strip())
+                        numeric_values.append(num_value)
+                    except ValueError:
+                        continue # Bỏ qua giá trị không phải số
+            conn.close()
+           
+            if numeric_values:
+                return min(numeric_values), max(numeric_values)
             else:
-                yeu_cau_export = f"{yeu_cau_display} {gia_tri} {don_vi}".strip()
-
-            # Ghi dữ liệu vào Excel
-            ws_ctkt_ms[f'A{row}'] = stt_value
-            ws_ctkt_ms[f'B{row}'] = chi_tieu_display if chi_tieu_display else ""
-            ws_ctkt_ms[f'C{row}'] = yeu_cau_export if yeu_cau_export else ""
-            ws_ctkt_ms[f'D{row}'] = tieu_chi if tieu_chi else ""
-            ws_ctkt_ms[f'E{row}'] = loai_chi_tieu if loai_chi_tieu else ""
-
-            # Định dạng font và căn chỉnh
-            is_header = "group_header" in tags or "yeu_cau_khac" in tags
-            for col in range(1, 6):
-                cell = ws_ctkt_ms.cell(row=row, column=col)
-                cell.font = Font(name="Times New Roman", size=12, bold=(col == 2 and is_header))
-                cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="center" if col == 1 else "left")
-
-            # Đánh dấu màu xanh nếu cần, nhưng không áp dụng từ "yeu_cau_khac" trở xuống
-            if not disable_blue_fill:
-                ind_id = self.ctkt_mua_sam_indicator_map.get(child, None)
-                if ind_id and self.should_mark_blue_for_export(ind_id, gia_tri, "ctkt_mua_sam"):
-                    for col in range(1, 6):
-                        ws_ctkt_ms.cell(row=row, column=col).fill = self.blue_fill
-
-            row += 1
-
-        # Thêm border cho toàn bộ bảng
-        for row in ws_ctkt_ms.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=5):
-            for cell in row:
-                cell.border = thin_border
-
-        # Định dạng chiều rộng cột
-        ws_ctkt_ms.column_dimensions['A'].width = 8
-        ws_ctkt_ms.column_dimensions['B'].width = 30
-        ws_ctkt_ms.column_dimensions['C'].width = 50
-        ws_ctkt_ms.column_dimensions['D'].width = 60
-        ws_ctkt_ms.column_dimensions['E'].width = 15
-
-        wb_ctkt_ms.save(os.path.join(folder, f"{safe_project_name}_Ctkt mua sắm.xlsx"))
-
-        # ==============================
-        # Hoàn tất
-        # ==============================
-        messagebox.showinfo("Thành công", f"Đã xuất 5 files Excel")
+                return None, None
+               
+        except Exception as e:
+            conn.close()
+            print(f"Lỗi khi tính min/max: {str(e)}")
+            return None, None

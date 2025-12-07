@@ -25,20 +25,20 @@ class AddIndicatorWindow:
         v_scrollbar = tk.Scrollbar(self.tree_frame, orient="vertical")
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.tree = ttk.Treeview(self.tree_frame, columns=("Yêu cầu kỹ thuật", "Chỉ tiêu", "Giá trị", "Đơn vị", "Hành động"), show="headings",
+        self.tree = ttk.Treeview(self.tree_frame, columns=("Mã chỉ tiêu", "Chỉ tiêu", "Giá trị", "Đơn vị", "Hành động"), show="headings",
                                  yscrollcommand=v_scrollbar.set)
         v_scrollbar.config(command=self.tree.yview)
         
-        self.tree.heading("Yêu cầu kỹ thuật", text="Yêu cầu kỹ thuật")
+        self.tree.heading("Mã chỉ tiêu", text="Mã chỉ tiêu")
         self.tree.heading("Chỉ tiêu", text="Chỉ tiêu")
         self.tree.heading("Giá trị", text="Giá trị")
         self.tree.heading("Đơn vị", text="Đơn vị")
         self.tree.heading("Hành động", text="Hành động")
         
-        self.tree.column("Yêu cầu kỹ thuật", width=300, anchor="w")
-        self.tree.column("Chỉ tiêu", width=300, anchor="w")
-        self.tree.column("Giá trị", width=200, anchor="w")
-        self.tree.column("Đơn vị", width=100, anchor="w")
+        self.tree.column("Mã chỉ tiêu", width=100, anchor="center")
+        self.tree.column("Chỉ tiêu", width=240, anchor="w")
+        self.tree.column("Giá trị", width=440, anchor="w")
+        self.tree.column("Đơn vị", width=150, anchor="w")
         self.tree.column("Hành động", width=100, anchor="center")
         
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -151,18 +151,23 @@ class AddIndicatorWindow:
             for child in self.tree.get_children():
                 values = self.tree.item(child)["values"]
                 # SỬA: Lấy 4 giá trị đầu, bỏ qua cột "Hành động" (cột thứ 5)
-                req = str(values[0]).strip()
+                indicator_code = str(values[0]).strip()
                 indc = str(values[1]).strip()
                 value = str(values[2]).strip()
                 unit = str(values[3]).strip()
                 
-                if not req:
-                    messagebox.showerror("Lỗi", "Yêu cầu kỹ thuật bắt buộc phải có")
+                if not indicator_code:
+                    messagebox.showerror("Lỗi", "Mã chỉ tiêu bắt buộc phải có")
                     conn.rollback()
                     conn.close()
                     return
-                c.execute('''INSERT INTO indicators (type_id, requirement, indicator, value, unit)
-                             VALUES (?, ?, ?, ?, ?)''', (type_id, req, indc, value, unit))
+                if not indc:
+                    messagebox.showerror("Lỗi", "Chỉ tiêu bắt buộc phải có")
+                    conn.rollback()
+                    conn.close()
+                    return
+                c.execute('''INSERT INTO indicators (type_id, indicator_code, indicator, value, unit)
+                             VALUES (?, ?, ?, ?, ?)''', (type_id, indicator_code, indc, value, unit))
             conn.commit()
             messagebox.showinfo("Thành công", "Đã thêm chỉ tiêu mới")
             self.refresh_callback()

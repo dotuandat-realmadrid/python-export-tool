@@ -1,0 +1,56 @@
+# -----------------------------
+#  Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+*.pyo
+*.pyc
+
+# Virtual environment
+venv/
+.env/
+ENV/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# -----------------------------
+#  SQLite Database
+# -----------------------------
+*.sqlite
+*.sqlite3
+product_db.sqlite
+
+# -----------------------------
+#  Logs & temp
+# -----------------------------
+*.log
+*.tmp
+*.temp
+*.bak
+
+# -----------------------------
+#  OS files
+# -----------------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------------
+#  IDE / Editor settings
+# -----------------------------
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+
+# -----------------------------
+#  Generated files
+# -----------------------------
+dist/
+build/

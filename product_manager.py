@@ -305,10 +305,8 @@ class ProductManager:
 
             current_product_id = None
             current_type_id = None
-            current_requirement = None
             manufacturer_ids = []
             indicator_ids = []
-            previous_tt = None
 
             product_specs = defaultdict(list)
             reference_values = defaultdict(list)
@@ -323,22 +321,21 @@ class ProductManager:
             for row_idx, row in enumerate(rows[1:], start=2):
                 tt = str(row[0]).strip() if row[0] else ""
                 noi_dung = str(row[1]).strip() if row[1] else ""
+                chi_tieu_chung_loai = str(row[2]).strip() if len(row) > 2 and row[2] else ""
                 chi_tieu_ky_thuat = str(row[3]).strip() if len(row) > 3 and row[3] else ""
                 tieu_chi_danh_gia = str(row[4]) if len(row) > 4 and row[4] and str(row[4]).strip() else ""
                 loai_chi_tieu = str(row[5]).strip() if len(row) > 5 and row[5] else "CTCB"
-
-                # Đọc đúng cặp cột (Chỉ tiêu hãng, Tham chiếu) và luôn giữ đồng bộ
+                
+                # Lấy type_name từ cột M (index 12)
+                type_name = str(row[12]).strip() if len(row) > 12 and row[12] else ""
+                
+                # Đọc cặp chi_tieu_hang và tham_chieu: G(6)-H(7), I(8)-J(9), K(10)-L(11)
                 chi_tieu_hangs = []
                 tham_chieus = []
-                if len(row) > 6:
-                    for i in range(6, len(row), 2):
-                        chi_tieu_hang_val = row[i] if i < len(row) else None
-                        tham_chieu_val = row[i+1] if i+1 < len(row) else None
-                        
-                        chi_tieu_hang = str(chi_tieu_hang_val).strip() if chi_tieu_hang_val is not None and str(chi_tieu_hang_val).strip() != "None" else ""
-                        tham_chieu = str(tham_chieu_val).strip() if tham_chieu_val is not None and str(tham_chieu_val).strip() != "None" else ""
-                        
-                        # Luôn append cả 2 để giữ đồng bộ index
+                for i in range(6, 12, 2):  # 6(G),8(I),10(K)
+                    if i < len(row):
+                        chi_tieu_hang = str(row[i]).strip() if row[i] else ""
+                        tham_chieu = str(row[i+1]).strip() if i+1 < len(row) and row[i+1] else ""
                         chi_tieu_hangs.append(chi_tieu_hang)
                         tham_chieus.append(tham_chieu)
 
@@ -359,7 +356,35 @@ class ProductManager:
                         "ctkt_mua_sam": {}
                     }
                     indicator_ids = []
-                    previous_tt = None
+
+                    # Lưu type từ cột M nếu có
+                    if type_name:
+                        existing_type = c.execute("SELECT id FROM product_types WHERE name=?", (type_name,)).fetchone()
+                        if existing_type:
+                            current_type_id = existing_type[0]
+                        else:
+                            c.execute("INSERT INTO product_types (name) VALUES (?)", (type_name,))
+                            current_type_id = c.lastrowid
+
+                        # Kiểm tra trùng tên sản phẩm trong cùng loại
+                        if current_product_id:
+                            current_product_name = c.execute("SELECT name FROM products WHERE id=?", (current_product_id,)).fetchone()[0]
+                            duplicate_check = c.execute("""
+                                SELECT p.id, p.name 
+                                FROM products p
+                                JOIN product_type_mapping_products ptmp ON p.id = ptmp.product_id
+                                WHERE ptmp.type_id = ? AND p.name = ? AND p.id != ?
+                            """, (current_type_id, current_product_name, current_product_id)).fetchall()
+                            
+                            if duplicate_check:
+                                conn.rollback()
+                                messagebox.showerror("Lỗi Import", 
+                                    f"Dòng {row_idx}: Sản phẩm '{current_product_name}' đã tồn tại trong loại '{type_name}'!\n"
+                                    f"Không thể import 2 sản phẩm trùng tên trong cùng loại sản phẩm.")
+                                conn.close()
+                                return
+                            
+                            c.execute("INSERT INTO product_type_mapping_products (product_id, type_id) VALUES (?, ?)", (current_product_id, current_type_id))
 
                     # Xử lý thông tin hãng từ hàng sản phẩm
                     for idx, (chi_tieu_hang, tham_chieu) in enumerate(zip(chi_tieu_hangs, tham_chieus), 1):
@@ -399,100 +424,22 @@ class ProductManager:
                         product_specs[man_id].append(chi_tieu_hang_str)
                         reference_values[man_id].append(tham_chieu_str)
 
-                    continue
+                        # Lưu mapping cho manufacturer với type_id nếu có
+                        if current_type_id:
+                            c.execute("INSERT INTO product_type_mapping (manufacturer_id, type_id) VALUES (?, ?)", (man_id, current_type_id))
 
-                # Xử lý hàng "Chủng loại"
-                if noi_dung.lower() == "chủng loại":
-                    type_name = chi_tieu_ky_thuat
-
-                    # Lưu product_type
-                    existing_type = c.execute("SELECT id FROM product_types WHERE name=?", (type_name,)).fetchone()
-                    if existing_type:
-                        current_type_id = existing_type[0]
-                    else:
-                        c.execute("INSERT INTO product_types (name) VALUES (?)", (type_name,))
-                        current_type_id = c.lastrowid
-
-                    # Kiểm tra trùng tên sản phẩm trong cùng loại
-                    if current_product_id:
-                        current_product_name = c.execute("SELECT name FROM products WHERE id=?", (current_product_id,)).fetchone()[0]
-                        duplicate_check = c.execute("""
-                            SELECT p.id, p.name 
-                            FROM products p
-                            JOIN product_type_mapping_products ptmp ON p.id = ptmp.product_id
-                            WHERE ptmp.type_id = ? AND p.name = ? AND p.id != ?
-                        """, (current_type_id, current_product_name, current_product_id)).fetchall()
-                        
-                        if duplicate_check:
-                            conn.rollback()
-                            messagebox.showerror("Lỗi Import", 
-                                f"Dòng {row_idx}: Sản phẩm '{current_product_name}' đã tồn tại trong loại '{type_name}'!\n"
-                                f"Không thể import 2 sản phẩm trùng tên trong cùng loại sản phẩm.")
-                            conn.close()
-                            return
-                        
-                        c.execute("INSERT INTO product_type_mapping_products (product_id, type_id) VALUES (?, ?)", (current_product_id, current_type_id))
-
-                    # Lưu mapping cho manufacturers
-                    for man_id in manufacturer_ids:
-                        c.execute("INSERT INTO product_type_mapping (manufacturer_id, type_id) VALUES (?, ?)", (man_id, current_type_id))
-
-                    # TẠO INDICATOR "Chủng loại"
-                    c.execute("INSERT INTO indicators (type_id, requirement, indicator, value, unit) VALUES (?, ?, ?, ?, ?)",
-                            (current_type_id, "Chủng loại", None, type_name, None))
-                    ind_id = c.lastrowid
-                    indicator_ids.append(ind_id)
-
-                    # Lưu custom indicators cho "Chủng loại"
-                    custom_indicators["three_brands"][f"so_sanh_{ind_id}"] = type_name
-                    custom_indicators["bom"][f"so_sanh_{ind_id}"] = type_name
-                    custom_indicators["dmkt"][f"so_sanh_{ind_id}"] = type_name
-                    custom_indicators["ctkt_bo"][f"gia_tri_{ind_id}"] = type_name
-                    custom_indicators["ctkt_mua_sam"][f"so_sanh_{ind_id}"] = type_name
-
-                    if loai_chi_tieu:
-                        custom_indicators["three_brands"][f"crit_type_{ind_id}"] = loai_chi_tieu
-                        custom_indicators["bom"][f"crit_type_{ind_id}"] = loai_chi_tieu
-                        custom_indicators["dmkt"][f"crit_type_{ind_id}"] = loai_chi_tieu
-                        custom_indicators["ctkt_mua_sam"][f"crit_type_{ind_id}"] = loai_chi_tieu
-
-                    # Xử lý giá trị hãng cho indicator "Chủng loại"
-                    for man_idx, (chi_tieu_hang, tham_chieu) in enumerate(zip(chi_tieu_hangs, tham_chieus)):
-                        if man_idx < len(manufacturer_ids):
-                            man_id = manufacturer_ids[man_idx]
-                            
-                            # Lưu specification_value
-                            if chi_tieu_hang:
-                                product_specs[man_id].append(chi_tieu_hang)
-                                c.execute("INSERT INTO product_specifications (manufacturer_id, indicator_id, specification_value) VALUES (?, ?, ?)",
-                                        (man_id, ind_id, chi_tieu_hang))
-                            
-                            # Lưu tham chiếu với key ref_value_{man_id}_{ind_id}
-                            if tham_chieu:
-                                reference_values[man_id].append(tham_chieu)
-                                custom_indicators["three_brands"][f"ref_value_{man_id}_{ind_id}"] = tham_chieu
-                                custom_indicators["bom"][f"ref_value_{man_id}_{ind_id}"] = tham_chieu
-
-                    current_requirement = "Chủng loại"
-                    previous_tt = None
                     continue
 
                 # Xử lý các indicator khác
-                has_indicator_data = chi_tieu_ky_thuat or tieu_chi_danh_gia or loai_chi_tieu != "CTCB" or any(chi_tieu_hangs) or any(tham_chieus)
+                has_indicator_data = chi_tieu_ky_thuat or tieu_chi_danh_gia or loai_chi_tieu != "CTCB" or any(chi_tieu_hangs) or any(tham_chieus) or (tt and noi_dung)
 
-                if tt and tt != previous_tt:
-                    current_requirement = noi_dung
-                    previous_tt = tt
-                    if not has_indicator_data:
-                        continue
-
-                elif not has_indicator_data:
+                if not has_indicator_data:
                     continue
 
                 # Tạo indicator
                 danh_gia, gia_tri, don_vi = self.parse_chi_tieu_ky_thuat(chi_tieu_ky_thuat)
-                c.execute("INSERT INTO indicators (type_id, requirement, indicator, value, unit) VALUES (?, ?, ?, ?, ?)",
-                        (current_type_id, current_requirement or noi_dung, noi_dung, gia_tri, don_vi))
+                c.execute("INSERT INTO indicators (type_id, indicator_code, indicator, value, unit) VALUES (?, ?, ?, ?, ?)",
+                        (current_type_id, tt, noi_dung, gia_tri, don_vi))
                 ind_id = c.lastrowid
                 indicator_ids.append(ind_id)
 
@@ -570,7 +517,7 @@ class ProductManager:
         """
         GIẢI THÍCH: Lưu dữ liệu sản phẩm vào database
         - Lưu reference_products
-        - Lưu product_custom_indicators (bao gồm ref_value cho product_name và các custom khác)
+        - Lưu product_custom_indicators (các custom đã được chuẩn bị sẵn trong custom_indicators)
         - ĐÃ SỬA: Bỏ phần lưu value từ indicators vào product_custom_indicators vì đã được lưu sẵn trong custom_indicators
         """
         # Lưu reference_products
